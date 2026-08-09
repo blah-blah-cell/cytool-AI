@@ -1,134 +1,155 @@
 # cytool-AI
 
-`cytool-AI` is a local-first, modular cybersecurity automation platform for
-authorized security research and defensive operations.
+cytool-AI is a Linux-first, local-first cybersecurity automation workspace for
+**authorized research and defensive operations**. It combines evidence
+collection, case management, a local dashboard, optional AI assistance, and
+integrity-verified tool packs without silently executing downloaded code.
 
-The first release is deliberately a small, inspectable foundation: a Linux CLI,
-a signed-style module manifest format, selective module installation, project
-workspaces, and an append-only audit log. It does not include active scanning or
-exploit functionality.
+> Status: early v0.1. The core control plane and initial evidence workflows are
+> implemented. See [What works today](#what-works-today) for the exact scope.
 
-## Principles
+## Why cytool-AI
 
-- **Authorization first.** Modules that can touch targets require an explicit
-  authorization acknowledgement.
-- **Local-first.** Findings and project data stay in the chosen workspace.
-- **Modular by design.** Capabilities are opt-in; a registry controls what is
-  available and installation records the exact module metadata used.
-- **Auditable.** Every install and execution is recorded as JSON Lines.
+- **Local by default** — workspaces, evidence, reports, and audit logs remain
+  on the operator's machine.
+- **Authorization first** — protected modules require `--authorized`; web work
+  must match a declared domain scope.
+- **Auditable** — installations, analysis actions, AI requests, and terminal
+  requests are captured in an append-only JSON Lines audit trail.
+- **Modular** — install only the capabilities you need. Tool packs require an
+  explicit manifest and SHA-256 verification before download.
+- **AI-ready, not AI-dependent** — connect an OpenAI-compatible provider when
+  wanted; provider credentials are only read from an environment variable.
 
-## Capabilities in v0.1
+## What works today
 
-- Offline artifact/binary fingerprinting: SHA-256/SHA-1, format hints, and
-  printable strings from a supplied file—never execution.
-- Memory capture, RE, cloud, log, and web workflows exposed as selective,
-  auditable modules. Integrations are added only after review.
-- Explicit per-workspace scope declarations; any supplied target is checked
-  against approved domains before an execution request is recorded.
-- Markdown evidence reports and provider-neutral AI bundles that stay local
-  until the operator chooses a provider.
-- A local-only JSON dashboard API (`/health`, `/api/modules`, `/api/audit`).
+| Area | Current capability | Boundary |
+| --- | --- | --- |
+| Case management | Workspaces, reports, findings, audit history, SARIF export | Local files only |
+| Artifact triage | Hashes, strings, format hints | Supplied files are never executed |
+| RE | Native ELF/PE metadata and optional `readelf`/`objdump`/`rabin2` evidence | Read-only parsers |
+| Memory | Offline URL, IPv4, and domain extraction | Capture is read, never executed |
+| Logs | Timestamp correlation across text logs | Offline only |
+| Cloud | Baseline posture flags in supplied JSON exports | Offline only |
+| Web | Response-header review and HTML form/script inventory | One in-scope request; no crawling or payload injection |
+| AI | `ask`, `teach`, and review-only `fix` workflows | Explicit provider configuration and opt-in terminal context |
+| Terminal | `plan`, `confirm`, and `approved` modes | Tiny read-only argv allowlist; no shell/network/privilege escalation |
 
-## AI assistant and terminal controls
+## Install
 
-cytool-AI works with any OpenAI-compatible Chat Completions provider. The
-provider key is never saved to disk; only the name of its environment variable
-is stored locally.
+Python 3.11 or later is required.
 
 ```bash
-export OPENAI_API_KEY="..."
-cytool ai configure --base-url https://api.openai.com/v1 --model gpt-5 --api-key-env OPENAI_API_KEY
-cytool ai teach "Explain this ELF finding" --workspace research-lab --terminal-context
-cytool ai fix "Review the latest audit events" --workspace research-lab
+git clone https://github.com/blah-blah-cell/cytool-AI.git
+cd cytool-AI
+python3 -m pip install -e .
 ```
 
-`--terminal-context` collects only `pwd`, `git status --short`, and `git diff
---stat` from an operator-selected directory; credentials are redacted before
-being sent. `cytool terminal` uses three approval modes: `plan` (no execution),
-`confirm` (preview only), and `approved` (executes only a small read-only
-allowlist with no shell, redirects, pipes, downloads, privilege escalation, or
-network commands).
-
-For local client compatibility, run `cytool dashboard --workspace research-lab`
-with `CYTOOL_SERVER_KEY` set. It provides a local authenticated
-`POST /v1/chat/completions` proxy to your configured provider and must bind to
-localhost.
-
-## Tool packs and log correlation
-
-Tool packs are explicit, non-executing downloads. Register a JSON manifest with
-an HTTPS source and its expected SHA-256, then fetch it only when needed.
-Failed integrity checks delete the downloaded file. A `file://` source is also
-allowed solely for local development and tests.
+## Five-minute start
 
 ```bash
-cytool toolpacks register ./my-toolpack.json --workspace research-lab
-cytool toolpacks fetch my-toolpack --workspace research-lab
+# Create a case workspace.
+cytool init research-lab
+
+# Triage a file locally.
+cytool modules install artifact-inspector --workspace research-lab
+cytool inspect ./suspicious-file --workspace research-lab --ai-bundle
+
+# Review the local case dashboard.
+cytool dashboard --workspace research-lab
+# Open http://127.0.0.1:8765/
+```
+
+By default, workspaces are stored in `~/.local/share/cytool-ai/workspaces`.
+Set `CYTOOL_HOME` to use another parent directory.
+
+## Typical workflows
+
+### Binary and reverse-engineering evidence
+
+```bash
+cytool modules install binary-fingerprint --workspace research-lab
+cytool binary inspect ./sample.bin --workspace research-lab
+cytool integrations list
+cytool binary external readelf ./sample.elf --workspace research-lab
+```
+
+### Memory and log evidence
+
+```bash
+cytool modules install memory-artifact-triage --workspace research-lab
+cytool memory scan ./capture.raw --workspace research-lab --authorized
+
 cytool modules install log-correlation --workspace research-lab
 cytool logs correlate ./auth.log ./web.log --workspace research-lab
 ```
 
-## Evidence workflows
-
-The first-release workflows are deliberately evidence-first and local:
+### Authorized web and cloud review
 
 ```bash
-# Reverse engineering: parse container metadata only; never execute a sample.
-cytool modules install binary-fingerprint --workspace research-lab
-cytool binary inspect ./sample.bin --workspace research-lab
-
-# Memory triage: extract URLs and IP addresses from an offline capture.
-cytool modules install memory-artifact-triage --workspace research-lab
-cytool memory scan ./capture.raw --workspace research-lab --authorized
-
-# Web: one authorized HEAD request for header evidence. No crawling or payload injection.
-cytool scope set --workspace research-lab --engagement "Client review" --authorized-by client --domain example.com
+cytool scope set --workspace research-lab \
+  --engagement "Client review" --authorized-by client --domain example.com
 cytool modules install web-scope-check --workspace research-lab
 cytool web headers https://example.com --workspace research-lab --authorized
 cytool web forms https://example.com/login --workspace research-lab --authorized
 
-# Cloud: inspect an exported JSON document offline.
 cytool modules install cloud-evidence-review --workspace research-lab
 cytool cloud review ./cloud-export.json --workspace research-lab --authorized
 ```
 
-Use `cytool integrations list` to discover optional operator-installed tools
-such as readelf, radare2, Volatility, and YARA. `cytool runners list` exposes
-the isolation profiles used as the basis for future container and remote-agent
-workers; v0.1 does not start either automatically.
-
-## Quick start
-
-Requires Python 3.11 or later.
+### Reports and downstream export
 
 ```bash
-python3 -m pip install -e .
-cytool init research-lab
-cytool modules list
-cytool modules install artifact-inspector
-cytool inspect ./suspicious-file --workspace research-lab --ai-bundle
-cytool audit --workspace research-lab
+cytool findings --workspace research-lab
+cytool export sarif --workspace research-lab --output ./findings.sarif
 ```
 
-The workspace is created beneath `~/.local/share/cytool-ai/workspaces` by
-default. Override it with `CYTOOL_HOME`.
+## AI assistant
 
-## Roadmap
+cytool-AI accepts OpenAI-compatible Chat Completions providers. It stores the
+provider URL, model, and environment-variable name only—not the API key.
 
-1. Core workspace, module registry, audit trail, safe execution boundary.
-2. Production-quality parsers and integrations for user-provided samples,
-   memory captures, exported logs, and cloud evidence.
-3. Sandboxed tool runners with reviewed, integrity-verified downloads.
-4. Web-security and cloud-security automation constrained to declared,
-   authorized targets.
-5. Optional team dashboard, remote runners, and enterprise controls.
+```bash
+export OPENAI_API_KEY="..."
+export CYTOOL_SERVER_KEY="local-server-secret"
 
-## Responsible use
+cytool ai configure --base-url https://api.openai.com/v1 \
+  --model gpt-5 --api-key-env OPENAI_API_KEY
+cytool ai teach "Explain the latest binary report" --workspace research-lab
+cytool ai fix "Prioritize these case findings" --workspace research-lab
+```
 
-Use cytool-AI only for systems, samples, and networks you own or have explicit
-permission to assess. The project will keep modules scoped, observable, and
-designed for legitimate research and defensive work.
+Add `--terminal-context` only when you want to share a redacted snapshot of
+`pwd`, `git status --short`, and `git diff --stat` from a chosen directory.
 
-## License
+The local dashboard also serves `GET /v1/models` and authenticated
+`POST /v1/chat/completions` for compatible local clients. It is localhost-only.
 
-MIT. See [LICENSE](LICENSE).
+## Tool packs
+
+A tool pack manifest must provide exactly `id`, `name`, `summary`, `version`,
+`source`, and `sha256`. Sources must use HTTPS (or `file://` for local
+development). Downloaded packs are checksum-verified and stored, **not run**.
+
+```bash
+cytool toolpacks register ./my-toolpack.json --workspace research-lab
+cytool toolpacks fetch my-toolpack --workspace research-lab
+```
+
+## Safety model
+
+Use cytool-AI only against systems, networks, and data you own or are
+explicitly authorized to assess. Current web workflows avoid payload injection;
+the terminal feature does not use a shell and rejects redirects, pipes,
+substitutions, downloads, network commands, and privilege escalation. Container
+and remote runner profiles are descriptive in v0.1 and do not start anything.
+
+## Development
+
+```bash
+PYTHONPATH=src python3 -m pytest
+```
+
+The project is MIT licensed, except for the explicitly attributed
+Apache-2.0-derived approval utility documented in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

@@ -9,6 +9,8 @@ from cytool_ai.approval import ApprovalMode
 from cytool_ai.terminal import execute, redact
 from cytool_ai.toolpacks import fetch, register
 from cytool_ai.investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_input_surface
+from cytool_ai.exports import write_sarif
+from cytool_ai.findings import add
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -107,3 +109,15 @@ def test_memory_domains_and_elf_sections(tmp_path):
     capture = tmp_path / "capture.raw"
     capture.write_bytes(b"dns api.example.test https://api.example.test/health")
     assert "api.example.test" in memory_artifact_scan(capture)["domains"]
+
+
+def test_sarif_export(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    report = workspace / "finding.md"
+    report.write_text("# Finding")
+    add(workspace, "Demo finding", report, "medium")
+    output = write_sarif(workspace, tmp_path / "out.sarif")
+    sarif = json.loads(output.read_text())
+    assert sarif["version"] == "2.1.0"
+    assert sarif["runs"][0]["results"][0]["level"] == "warning"

@@ -18,6 +18,8 @@ from .findings import list_all
 from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .integrations import discover
 from .runners import list_profiles
+from .exports import write_sarif
+from .retools import inspect as external_re_inspect
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
@@ -105,6 +107,10 @@ def build_parser() -> argparse.ArgumentParser:
     binary_inspect = binary_commands.add_parser("inspect", help="parse ELF/PE container metadata without execution")
     binary_inspect.add_argument("path")
     binary_inspect.add_argument("--workspace", required=True)
+    binary_external = binary_commands.add_parser("external", help="capture metadata from an installed RE utility")
+    binary_external.add_argument("tool", choices=["readelf", "objdump", "rabin2"])
+    binary_external.add_argument("path")
+    binary_external.add_argument("--workspace", required=True)
 
     memory = commands.add_parser("memory", help="offline analysis of supplied memory captures")
     memory_commands = memory.add_subparsers(dest="memory_command", required=True)
@@ -134,6 +140,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     findings = commands.add_parser("findings", help="list generated case findings")
     findings.add_argument("--workspace", required=True)
+
+    export = commands.add_parser("export", help="export case findings for downstream tools")
+    export_commands = export.add_subparsers(dest="export_command", required=True)
+    export_sarif = export_commands.add_parser("sarif", help="write SARIF 2.1.0 findings")
+    export_sarif.add_argument("--workspace", required=True)
+    export_sarif.add_argument("--output", required=True)
 
     integrations = commands.add_parser("integrations", help="discover optional locally installed analysis tools")
     integrations.add_argument("action", choices=["list"], nargs="?", default="list")
@@ -257,10 +269,11 @@ def main(argv: Sequence[str] | None = None) -> int:
             workspace = open_workspace(args.workspace)
             if "binary-fingerprint" not in installed(workspace):
                 raise RuntimeError("module is not installed: binary-fingerprint")
-            evidence = binary_metadata(Path(args.path))
-            report_path = write_report(workspace, "Binary metadata", evidence)
-            add_finding(workspace, "Binary metadata", report_path)
-            record(workspace, "binary.inspected", path=evidence["path"], format=evidence["format"])
+            evidence = binary_metadata(Path(args.path)) if args.binary_command == "inspect" else external_re_inspect(Path(args.path), args.tool)
+            title = "Binary metadata" if args.binary_command == "inspect" else f"External RE evidence ({args.tool})"
+            report_path = write_report(workspace, title, evidence)
+            add_finding(workspace, title, report_path)
+            record(workspace, "binary.inspected", path=str(Path(args.path).resolve()), engine=args.binary_command)
             print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
             return 0
         if args.command == "memory":
@@ -312,6 +325,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "runners":
             print(json.dumps(list_profiles(), indent=2))
+            return 0
+        if args.command == "export":
+            workspace = open_workspace(args.workspace)
+            output = write_sarif(workspace, Path(args.output))
+            record(workspace, "findings.exported", format="sarif", output=str(output))
+            print(output)
             return 0
         if args.command == "ai" and args.ai_command == "configure":
             settings = configure(args.base_url, args.model, args.api_key_env)
