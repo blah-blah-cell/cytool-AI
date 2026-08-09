@@ -8,6 +8,7 @@ from cytool_ai.paths import workspace_path
 from cytool_ai.approval import ApprovalMode
 from cytool_ai.terminal import execute, redact
 from cytool_ai.toolpacks import fetch, register
+from cytool_ai.investigations import binary_metadata, cloud_export_review, memory_artifact_scan
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -80,3 +81,17 @@ def test_verified_toolpack_is_saved_but_never_executed(monkeypatch, tmp_path):
     register(workspace, manifest)
     downloaded = fetch(workspace, "fixture-pack")
     assert downloaded.read_bytes() == source.read_bytes()
+
+
+def test_offline_investigation_workflows(tmp_path):
+    elf = tmp_path / "sample"
+    elf.write_bytes(b"\x7fELF\x02\x01" + b"\0" * 12 + b"\x3e\0")
+    assert binary_metadata(elf)["details"]["machine"] == "x86-64"
+    capture = tmp_path / "capture.raw"
+    capture.write_bytes(b"connect https://example.test/path from 192.0.2.25")
+    memory = memory_artifact_scan(capture)
+    assert memory["urls"] == ["https://example.test/path"]
+    assert memory["ipv4_addresses"] == ["192.0.2.25"]
+    cloud = tmp_path / "cloud.json"
+    cloud.write_text('{"bucket":{"public":true,"encryption":false}}')
+    assert cloud_export_review(cloud)["finding_count"] == 2

@@ -68,6 +68,29 @@ cytool modules install log-correlation --workspace research-lab
 cytool logs correlate ./auth.log ./web.log --workspace research-lab
 ```
 
+## Evidence workflows
+
+The first-release workflows are deliberately evidence-first and local:
+
+```bash
+# Reverse engineering: parse container metadata only; never execute a sample.
+cytool modules install binary-fingerprint --workspace research-lab
+cytool binary inspect ./sample.bin --workspace research-lab
+
+# Memory triage: extract URLs and IP addresses from an offline capture.
+cytool modules install memory-artifact-triage --workspace research-lab
+cytool memory scan ./capture.raw --workspace research-lab --authorized
+
+# Web: one authorized HEAD request for header evidence. No crawling or payload injection.
+cytool scope set --workspace research-lab --engagement "Client review" --authorized-by client --domain example.com
+cytool modules install web-scope-check --workspace research-lab
+cytool web headers https://example.com --workspace research-lab --authorized
+
+# Cloud: inspect an exported JSON document offline.
+cytool modules install cloud-evidence-review --workspace research-lab
+cytool cloud review ./cloud-export.json --workspace research-lab --authorized
+```
+
 ## Quick start
 
 Requires Python 3.11 or later.

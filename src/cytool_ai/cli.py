@@ -13,6 +13,9 @@ from .approval import ApprovalMode, description
 from .audit import read, record
 from .analysis import inspect_file
 from .dashboard import serve
+from .findings import add as add_finding
+from .findings import list_all
+from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
@@ -94,6 +97,37 @@ def build_parser() -> argparse.ArgumentParser:
     log_correlate = log_commands.add_parser("correlate", help="merge and order timestamped log lines")
     log_correlate.add_argument("paths", nargs="+")
     log_correlate.add_argument("--workspace", required=True)
+
+    binary = commands.add_parser("binary", help="offline binary and reverse-engineering metadata")
+    binary_commands = binary.add_subparsers(dest="binary_command", required=True)
+    binary_inspect = binary_commands.add_parser("inspect", help="parse ELF/PE container metadata without execution")
+    binary_inspect.add_argument("path")
+    binary_inspect.add_argument("--workspace", required=True)
+
+    memory = commands.add_parser("memory", help="offline analysis of supplied memory captures")
+    memory_commands = memory.add_subparsers(dest="memory_command", required=True)
+    memory_scan = memory_commands.add_parser("scan", help="extract URLs and IP evidence from a capture")
+    memory_scan.add_argument("path")
+    memory_scan.add_argument("--workspace", required=True)
+    memory_scan.add_argument("--authorized", action="store_true")
+    memory_scan.add_argument("--max-bytes", type=int, default=64 * 1024 * 1024)
+
+    web = commands.add_parser("web", help="scope-constrained web evidence review")
+    web_commands = web.add_subparsers(dest="web_command", required=True)
+    web_headers = web_commands.add_parser("headers", help="collect HTTP response headers; no payloads or crawling")
+    web_headers.add_argument("url")
+    web_headers.add_argument("--workspace", required=True)
+    web_headers.add_argument("--authorized", action="store_true")
+
+    cloud = commands.add_parser("cloud", help="offline review of exported cloud configuration")
+    cloud_commands = cloud.add_subparsers(dest="cloud_command", required=True)
+    cloud_review = cloud_commands.add_parser("review", help="identify baseline posture flags in a JSON export")
+    cloud_review.add_argument("path")
+    cloud_review.add_argument("--workspace", required=True)
+    cloud_review.add_argument("--authorized", action="store_true")
+
+    findings = commands.add_parser("findings", help="list generated case findings")
+    findings.add_argument("--workspace", required=True)
 
     ai = commands.add_parser("ai", help="OpenAI-compatible assistant workflows")
     ai_commands = ai.add_subparsers(dest="ai_command", required=True)
@@ -204,8 +238,61 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise RuntimeError("module is not installed: log-correlation")
             evidence = correlate([Path(path) for path in args.paths])
             report_path = write_report(workspace, "Log correlation", evidence)
+            add_finding(workspace, "Log correlation", report_path)
             record(workspace, "logs.correlated", sources=evidence["sources"], event_count=evidence["event_count"])
             print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
+        if args.command == "binary":
+            workspace = open_workspace(args.workspace)
+            if "binary-fingerprint" not in installed(workspace):
+                raise RuntimeError("module is not installed: binary-fingerprint")
+            evidence = binary_metadata(Path(args.path))
+            report_path = write_report(workspace, "Binary metadata", evidence)
+            add_finding(workspace, "Binary metadata", report_path)
+            record(workspace, "binary.inspected", path=evidence["path"], format=evidence["format"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
+        if args.command == "memory":
+            workspace = open_workspace(args.workspace)
+            if "memory-artifact-triage" not in installed(workspace):
+                raise RuntimeError("module is not installed: memory-artifact-triage")
+            if not args.authorized:
+                raise PermissionError("memory analysis requires --authorized confirmation")
+            if not 1 <= args.max_bytes <= 512 * 1024 * 1024:
+                raise ValueError("max-bytes must be between 1 and 536870912")
+            evidence = memory_artifact_scan(Path(args.path), max_bytes=args.max_bytes)
+            report_path = write_report(workspace, "Memory artifact triage", evidence)
+            add_finding(workspace, "Memory artifact triage", report_path, "medium" if evidence["urls"] else "info")
+            record(workspace, "memory.scanned", path=evidence["path"], bytes_examined=evidence["bytes_examined"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
+        if args.command == "web":
+            workspace = open_workspace(args.workspace)
+            if "web-scope-check" not in installed(workspace):
+                raise RuntimeError("module is not installed: web-scope-check")
+            if not args.authorized:
+                raise PermissionError("web evidence review requires --authorized confirmation")
+            validate_target(workspace, args.url)
+            evidence = web_evidence(args.url)
+            report_path = write_report(workspace, "Web response-header review", evidence)
+            add_finding(workspace, "Web response-header review", report_path, "low" if evidence["missing_recommended_headers"] else "info")
+            record(workspace, "web.headers_reviewed", url=args.url, status=evidence["status"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
+        if args.command == "cloud":
+            workspace = open_workspace(args.workspace)
+            if "cloud-evidence-review" not in installed(workspace):
+                raise RuntimeError("module is not installed: cloud-evidence-review")
+            if not args.authorized:
+                raise PermissionError("cloud evidence review requires --authorized confirmation")
+            evidence = cloud_export_review(Path(args.path))
+            report_path = write_report(workspace, "Cloud export posture review", evidence)
+            add_finding(workspace, "Cloud export posture review", report_path, "medium" if evidence["findings"] else "info")
+            record(workspace, "cloud.export_reviewed", path=evidence["path"], finding_count=evidence["finding_count"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
+        if args.command == "findings":
+            print(json.dumps(list_all(open_workspace(args.workspace)), indent=2))
             return 0
         if args.command == "ai" and args.ai_command == "configure":
             settings = configure(args.base_url, args.model, args.api_key_env)
