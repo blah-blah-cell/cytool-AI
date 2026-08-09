@@ -85,11 +85,17 @@ cytool memory scan ./capture.raw --workspace research-lab --authorized
 cytool scope set --workspace research-lab --engagement "Client review" --authorized-by client --domain example.com
 cytool modules install web-scope-check --workspace research-lab
 cytool web headers https://example.com --workspace research-lab --authorized
+cytool web forms https://example.com/login --workspace research-lab --authorized
 
 # Cloud: inspect an exported JSON document offline.
 cytool modules install cloud-evidence-review --workspace research-lab
 cytool cloud review ./cloud-export.json --workspace research-lab --authorized
 ```
+
+Use `cytool integrations list` to discover optional operator-installed tools
+such as readelf, radare2, Volatility, and YARA. `cytool runners list` exposes
+the isolation profiles used as the basis for future container and remote-agent
+workers; v0.1 does not start either automatically.
 
 ## Quick start
 

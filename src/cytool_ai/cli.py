@@ -15,7 +15,9 @@ from .analysis import inspect_file
 from .dashboard import serve
 from .findings import add as add_finding
 from .findings import list_all
-from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence
+from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
+from .integrations import discover
+from .runners import list_profiles
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
@@ -118,6 +120,10 @@ def build_parser() -> argparse.ArgumentParser:
     web_headers.add_argument("url")
     web_headers.add_argument("--workspace", required=True)
     web_headers.add_argument("--authorized", action="store_true")
+    web_forms = web_commands.add_parser("forms", help="inventory HTML forms and scripts; no payload injection")
+    web_forms.add_argument("url")
+    web_forms.add_argument("--workspace", required=True)
+    web_forms.add_argument("--authorized", action="store_true")
 
     cloud = commands.add_parser("cloud", help="offline review of exported cloud configuration")
     cloud_commands = cloud.add_subparsers(dest="cloud_command", required=True)
@@ -128,6 +134,11 @@ def build_parser() -> argparse.ArgumentParser:
 
     findings = commands.add_parser("findings", help="list generated case findings")
     findings.add_argument("--workspace", required=True)
+
+    integrations = commands.add_parser("integrations", help="discover optional locally installed analysis tools")
+    integrations.add_argument("action", choices=["list"], nargs="?", default="list")
+    runners = commands.add_parser("runners", help="show execution-isolation profiles")
+    runners.add_argument("action", choices=["list"], nargs="?", default="list")
 
     ai = commands.add_parser("ai", help="OpenAI-compatible assistant workflows")
     ai_commands = ai.add_subparsers(dest="ai_command", required=True)
@@ -273,10 +284,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.authorized:
                 raise PermissionError("web evidence review requires --authorized confirmation")
             validate_target(workspace, args.url)
-            evidence = web_evidence(args.url)
-            report_path = write_report(workspace, "Web response-header review", evidence)
-            add_finding(workspace, "Web response-header review", report_path, "low" if evidence["missing_recommended_headers"] else "info")
-            record(workspace, "web.headers_reviewed", url=args.url, status=evidence["status"])
+            evidence = web_evidence(args.url) if args.web_command == "headers" else web_input_surface(args.url)
+            title = "Web response-header review" if args.web_command == "headers" else "Web input-surface inventory"
+            severity = "low" if args.web_command == "headers" and evidence["missing_recommended_headers"] else "info"
+            report_path = write_report(workspace, title, evidence)
+            add_finding(workspace, title, report_path, severity)
+            record(workspace, f"web.{args.web_command}_reviewed", url=args.url, status=evidence["status"])
             print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
             return 0
         if args.command == "cloud":
@@ -293,6 +306,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "findings":
             print(json.dumps(list_all(open_workspace(args.workspace)), indent=2))
+            return 0
+        if args.command == "integrations":
+            print(json.dumps(discover(), indent=2))
+            return 0
+        if args.command == "runners":
+            print(json.dumps(list_profiles(), indent=2))
             return 0
         if args.command == "ai" and args.ai_command == "configure":
             settings = configure(args.base_url, args.model, args.api_key_env)
