@@ -18,8 +18,11 @@ from .findings import list_all
 from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .integrations import discover
 from .runners import list_profiles
-from .exports import write_sarif
+from .exports import write_sarif, write_stix
 from .retools import inspect as external_re_inspect
+from .iocs import extract as extract_iocs
+from .iocs import list_all as list_iocs
+from .dfirtools import volatility, yara_scan
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
@@ -146,6 +149,30 @@ def build_parser() -> argparse.ArgumentParser:
     export_sarif = export_commands.add_parser("sarif", help="write SARIF 2.1.0 findings")
     export_sarif.add_argument("--workspace", required=True)
     export_sarif.add_argument("--output", required=True)
+    export_stix = export_commands.add_parser("stix", help="write STIX 2.1 indicators")
+    export_stix.add_argument("--workspace", required=True)
+    export_stix.add_argument("--output", required=True)
+
+    iocs = commands.add_parser("iocs", help="extract and manage local indicators")
+    ioc_commands = iocs.add_subparsers(dest="ioc_command", required=True)
+    ioc_extract = ioc_commands.add_parser("extract", help="extract indicators from a supplied text or binary file")
+    ioc_extract.add_argument("path")
+    ioc_extract.add_argument("--workspace", required=True)
+    ioc_list = ioc_commands.add_parser("list", help="list deduplicated workspace indicators")
+    ioc_list.add_argument("--workspace", required=True)
+
+    dfir = commands.add_parser("dfir", help="optional offline YARA and Volatility adapters")
+    dfir_commands = dfir.add_subparsers(dest="dfir_command", required=True)
+    yara = dfir_commands.add_parser("yara", help="scan a supplied file using local YARA rules")
+    yara.add_argument("rules")
+    yara.add_argument("target")
+    yara.add_argument("--workspace", required=True)
+    yara.add_argument("--authorized", action="store_true")
+    vol = dfir_commands.add_parser("volatility", help="run an allowlisted Volatility plugin on a supplied capture")
+    vol.add_argument("image")
+    vol.add_argument("plugin")
+    vol.add_argument("--workspace", required=True)
+    vol.add_argument("--authorized", action="store_true")
 
     integrations = commands.add_parser("integrations", help="discover optional locally installed analysis tools")
     integrations.add_argument("action", choices=["list"], nargs="?", default="list")
@@ -328,9 +355,29 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "export":
             workspace = open_workspace(args.workspace)
-            output = write_sarif(workspace, Path(args.output))
-            record(workspace, "findings.exported", format="sarif", output=str(output))
+            output = write_sarif(workspace, Path(args.output)) if args.export_command == "sarif" else write_stix(workspace, Path(args.output))
+            record(workspace, "findings.exported", format=args.export_command, output=str(output))
             print(output)
+            return 0
+        if args.command == "iocs" and args.ioc_command == "extract":
+            workspace = open_workspace(args.workspace)
+            indicators = extract_iocs(workspace, Path(args.path))
+            record(workspace, "iocs.extracted", source=str(Path(args.path).resolve()), count=len(indicators))
+            print(json.dumps(indicators, indent=2))
+            return 0
+        if args.command == "iocs":
+            print(json.dumps(list_iocs(open_workspace(args.workspace)), indent=2))
+            return 0
+        if args.command == "dfir":
+            workspace = open_workspace(args.workspace)
+            if not args.authorized:
+                raise PermissionError("DFIR tool adapters require --authorized confirmation")
+            evidence = yara_scan(Path(args.rules), Path(args.target)) if args.dfir_command == "yara" else volatility(Path(args.image), args.plugin)
+            title = "YARA evidence" if args.dfir_command == "yara" else "Volatility evidence"
+            report_path = write_report(workspace, title, evidence)
+            add_finding(workspace, title, report_path)
+            record(workspace, f"dfir.{args.dfir_command}", returncode=evidence["returncode"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
             return 0
         if args.command == "ai" and args.ai_command == "configure":
             settings = configure(args.base_url, args.model, args.api_key_env)

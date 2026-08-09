@@ -9,8 +9,9 @@ from cytool_ai.approval import ApprovalMode
 from cytool_ai.terminal import execute, redact
 from cytool_ai.toolpacks import fetch, register
 from cytool_ai.investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_input_surface
-from cytool_ai.exports import write_sarif
+from cytool_ai.exports import write_sarif, write_stix
 from cytool_ai.findings import add
+from cytool_ai.iocs import extract
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -121,3 +122,14 @@ def test_sarif_export(tmp_path):
     sarif = json.loads(output.read_text())
     assert sarif["version"] == "2.1.0"
     assert sarif["runs"][0]["results"][0]["level"] == "warning"
+
+
+def test_ioc_extraction_and_stix_export(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    source = tmp_path / "evidence.txt"
+    source.write_text("visit https://evil.example/path from 198.51.100.5")
+    values = extract(workspace, source)
+    assert any(value["kind"] == "url" for value in values)
+    output = write_stix(workspace, tmp_path / "iocs.stix.json")
+    assert json.loads(output.read_text())["type"] == "bundle"

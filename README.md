@@ -29,7 +29,9 @@ integrity-verified tool packs without silently executing downloaded code.
 | Artifact triage | Hashes, strings, format hints | Supplied files are never executed |
 | RE | Native ELF/PE metadata and optional `readelf`/`objdump`/`rabin2` evidence | Read-only parsers |
 | Memory | Offline URL, IPv4, and domain extraction | Capture is read, never executed |
+| DFIR tools | Optional local YARA and Volatility adapters | Explicit authorization and user-supplied rules/images |
 | Logs | Timestamp correlation across text logs | Offline only |
+| IOCs | Local extraction, index, and STIX 2.1 export | No automatic external enrichment |
 | Cloud | Baseline posture flags in supplied JSON exports | Offline only |
 | Web | Response-header review and HTML form/script inventory | One in-scope request; no crawling or payload injection |
 | AI | `ask`, `teach`, and review-only `fix` workflows | Explicit provider configuration and opt-in terminal context |
@@ -82,6 +84,8 @@ cytool memory scan ./capture.raw --workspace research-lab --authorized
 
 cytool modules install log-correlation --workspace research-lab
 cytool logs correlate ./auth.log ./web.log --workspace research-lab
+cytool iocs extract ./capture.raw --workspace research-lab
+cytool export stix --workspace research-lab --output ./indicators.stix.json
 ```
 
 ### Authorized web and cloud review
@@ -95,6 +99,16 @@ cytool web forms https://example.com/login --workspace research-lab --authorized
 
 cytool modules install cloud-evidence-review --workspace research-lab
 cytool cloud review ./cloud-export.json --workspace research-lab --authorized
+```
+
+### Optional YARA and Volatility
+
+Install these tools through your operating system, then run them only against
+data you are authorized to analyze:
+
+```bash
+cytool dfir yara ./rules.yar ./sample.bin --workspace research-lab --authorized
+cytool dfir volatility ./capture.raw windows.pslist --workspace research-lab --authorized
 ```
 
 ### Reports and downstream export

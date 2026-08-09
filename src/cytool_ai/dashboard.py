@@ -9,6 +9,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from .ai import chat, configured
 from .audit import read
 from .findings import list_all
+from .iocs import list_all as list_iocs
 from .modules import registry
 from .workspaces import open_workspace
 
@@ -46,7 +47,9 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             elif self.path == "/api/findings":
                 payload = {"findings": list_all(workspace)}
             elif self.path == "/api/summary":
-                payload = {"workspace": workspace.name, "audit_events": len(read(workspace)), "findings": len(list_all(workspace)), "modules": len(registry())}
+                payload = {"workspace": workspace.name, "audit_events": len(read(workspace)), "findings": len(list_all(workspace)), "iocs": len(list_iocs(workspace)), "modules": len(registry())}
+            elif self.path == "/api/iocs":
+                payload = {"iocs": list_iocs(workspace)}
             else:
                 self.send_error(404, "not found")
                 return
