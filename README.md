@@ -29,6 +29,31 @@ exploit functionality.
   until the operator chooses a provider.
 - A local-only JSON dashboard API (`/health`, `/api/modules`, `/api/audit`).
 
+## AI assistant and terminal controls
+
+cytool-AI works with any OpenAI-compatible Chat Completions provider. The
+provider key is never saved to disk; only the name of its environment variable
+is stored locally.
+
+```bash
+export OPENAI_API_KEY="..."
+cytool ai configure --base-url https://api.openai.com/v1 --model gpt-5 --api-key-env OPENAI_API_KEY
+cytool ai teach "Explain this ELF finding" --workspace research-lab --terminal-context
+cytool ai fix "Review the latest audit events" --workspace research-lab
+```
+
+`--terminal-context` collects only `pwd`, `git status --short`, and `git diff
+--stat` from an operator-selected directory; credentials are redacted before
+being sent. `cytool terminal` uses three approval modes: `plan` (no execution),
+`confirm` (preview only), and `approved` (executes only a small read-only
+allowlist with no shell, redirects, pipes, downloads, privilege escalation, or
+network commands).
+
+For local client compatibility, run `cytool dashboard --workspace research-lab`
+with `CYTOOL_SERVER_KEY` set. It provides a local authenticated
+`POST /v1/chat/completions` proxy to your configured provider and must bind to
+localhost.
+
 ## Quick start
 
 Requires Python 3.11 or later.

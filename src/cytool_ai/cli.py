@@ -8,12 +8,15 @@ from collections.abc import Sequence
 from pathlib import Path
 
 from . import __version__
+from .ai import build_context, chat, configure, response_text
+from .approval import ApprovalMode, description
 from .audit import read, record
 from .analysis import inspect_file
 from .dashboard import serve
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
+from .terminal import execute
 from .workspaces import create, open_workspace
 
 
@@ -64,6 +67,25 @@ def build_parser() -> argparse.ArgumentParser:
     dashboard.add_argument("--workspace", required=True)
     dashboard.add_argument("--host", default="127.0.0.1")
     dashboard.add_argument("--port", type=int, default=8765)
+
+    terminal = commands.add_parser("terminal", help="preview or run a policy-allowed local command")
+    terminal.add_argument("terminal_command")
+    terminal.add_argument("--workspace", required=True)
+    terminal.add_argument("--mode", choices=[mode.value for mode in ApprovalMode], default=ApprovalMode.PLAN.value)
+    terminal.add_argument("--cwd", default=".", help="directory in which to run the command")
+
+    ai = commands.add_parser("ai", help="OpenAI-compatible assistant workflows")
+    ai_commands = ai.add_subparsers(dest="ai_command", required=True)
+    ai_configure = ai_commands.add_parser("configure", help="store an OpenAI-compatible provider configuration")
+    ai_configure.add_argument("--base-url", required=True, help="for example https://api.openai.com/v1")
+    ai_configure.add_argument("--model", required=True)
+    ai_configure.add_argument("--api-key-env", default="OPENAI_API_KEY")
+    for name, help_text in (("ask", "ask a security research question"), ("teach", "request a tutorial from current context"), ("fix", "request a reviewable remediation plan")):
+        assistant_command = ai_commands.add_parser(name, help=help_text)
+        assistant_command.add_argument("prompt")
+        assistant_command.add_argument("--workspace")
+        assistant_command.add_argument("--terminal-context", action="store_true")
+        assistant_command.add_argument("--cwd", default=".")
 
     audit = commands.add_parser("audit", help="show workspace audit events")
     audit.add_argument("--workspace", required=True)
@@ -131,6 +153,30 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "dashboard":
             serve(args.workspace, args.host, args.port)
+            return 0
+        if args.command == "terminal":
+            workspace = open_workspace(args.workspace)
+            mode = ApprovalMode(args.mode)
+            result = execute(args.terminal_command, mode, Path(args.cwd))
+            record(workspace, "terminal.command", command=list(result.command), mode=result.mode, executed=result.executed, returncode=result.returncode)
+            print(json.dumps({"authorization": description(mode), **result.__dict__}, indent=2))
+            return 0 if result.returncode in {None, 0} else result.returncode
+        if args.command == "ai" and args.ai_command == "configure":
+            settings = configure(args.base_url, args.model, args.api_key_env)
+            print(f"Configured {settings.base_url} with model {settings.model}; key remains in ${settings.api_key_env}.")
+            return 0
+        if args.command == "ai":
+            workspace = open_workspace(args.workspace) if args.workspace else None
+            context = build_context(workspace, args.terminal_context, Path(args.cwd))
+            prefixes = {
+                "teach": "Teach this clearly, using the supplied context and emphasizing safe, authorized practice:\n",
+                "fix": "Analyze this and propose a reviewable remediation plan. Do not execute commands:\n",
+                "ask": "Answer this with practical, authorization-first guidance:\n",
+            }
+            response = chat([{"role": "user", "content": prefixes[args.ai_command] + args.prompt}], context=context)
+            if workspace:
+                record(workspace, "ai.request", workflow=args.ai_command, terminal_context=args.terminal_context)
+            print(response_text(response))
             return 0
         if args.command == "audit":
             events = read(open_workspace(args.workspace))

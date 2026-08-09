@@ -4,6 +4,8 @@ import json
 
 from cytool_ai.cli import main
 from cytool_ai.paths import workspace_path
+from cytool_ai.approval import ApprovalMode
+from cytool_ai.terminal import execute, redact
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -46,3 +48,17 @@ def test_scope_prevents_out_of_scope_target(monkeypatch, tmp_path, capsys):
     assert main(["scope", "check", "api.example.com", "--workspace", "lab"]) == 0
     assert main(["scope", "check", "outside.example", "--workspace", "lab"]) == 2
     assert "outside the declared scope" in capsys.readouterr().out
+
+
+def test_terminal_modes_redact_and_do_not_use_a_shell(tmp_path):
+    preview = execute("pwd", ApprovalMode.PLAN, tmp_path)
+    assert not preview.executed
+    allowed = execute("pwd", ApprovalMode.APPROVED, tmp_path)
+    assert allowed.executed and allowed.returncode == 0
+    try:
+        execute("pwd; id", ApprovalMode.APPROVED, tmp_path)
+    except PermissionError as exc:
+        assert "shell syntax" in str(exc)
+    else:
+        raise AssertionError("shell syntax must be rejected")
+    assert "[REDACTED]" in redact("api_key=should-not-leak")
