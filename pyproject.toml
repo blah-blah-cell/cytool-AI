@@ -20,6 +20,9 @@ classifiers = [
 [project.scripts]
 cytool = "cytool_ai.cli:main"
 
+[tool.setuptools.package-data]
+cytool_ai = ["web/*.html"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

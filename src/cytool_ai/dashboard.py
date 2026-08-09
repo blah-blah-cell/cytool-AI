@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from pathlib import Path
 
 from .ai import chat, configured
 from .audit import read
@@ -14,7 +15,7 @@ from .modules import registry
 from .workspaces import open_workspace
 
 
-PAGE = """<!doctype html><html lang="en"><head><meta charset="utf-8"><title>cytool-AI</title><style>body{background:#0a1019;color:#dbe7f3;font:15px system-ui;margin:0}main{max-width:1050px;margin:48px auto;padding:0 24px}h1{color:#58d5ff}.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}.metric,section{background:#121d2b;border:1px solid #284155;border-radius:10px;padding:18px;margin:16px 0}.metric strong{display:block;font-size:28px;color:#7ee787}pre{white-space:pre-wrap;word-break:break-word;color:#bbd5e8}.tag{color:#7ee787}</style></head><body><main><h1>cytool-AI <span class="tag">local workspace</span></h1><p>Local-only dashboard. Evidence remains on this machine unless you explicitly use an AI provider.</p><div class="grid"><div class="metric">Modules<strong id="module-count">…</strong></div><div class="metric">Findings<strong id="finding-count">…</strong></div><div class="metric">Audit events<strong id="audit-count">…</strong></div></div><section><h2>Case findings</h2><pre id="findings">Loading…</pre></section><section><h2>Installed capability registry</h2><pre id="modules">Loading…</pre></section><section><h2>Recent audit events</h2><pre id="audit">Loading…</pre></section></main><script>for(const [id,url] of Object.entries({modules:'/api/modules',audit:'/api/audit',findings:'/api/findings'})){fetch(url).then(r=>r.json()).then(x=>document.getElementById(id).textContent=JSON.stringify(x,null,2)).catch(e=>document.getElementById(id).textContent=e.message)}fetch('/api/summary').then(r=>r.json()).then(x=>{document.getElementById('module-count').textContent=x.modules;document.getElementById('finding-count').textContent=x.findings;document.getElementById('audit-count').textContent=x.audit_events})</script></body></html>""".encode("utf-8")
+PAGE = (Path(__file__).with_name("web") / "dashboard.html").read_bytes()
 
 
 def serve(workspace_name: str, host: str, port: int) -> None:
