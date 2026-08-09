@@ -43,6 +43,34 @@ BUILTIN_MODULES = (
         category="web-security",
         requires_authorization=True,
     ),
+    Module(
+        id="binary-fingerprint",
+        name="Binary Fingerprint",
+        summary="Offline hashes, strings, and format hints for a user-provided binary.",
+        category="reverse-engineering",
+        requires_authorization=False,
+    ),
+    Module(
+        id="memory-artifact-triage",
+        name="Memory Artifact Triage",
+        summary="Offline strings and indicators review for a supplied memory capture.",
+        category="memory-forensics",
+        requires_authorization=True,
+    ),
+    Module(
+        id="cloud-evidence-review",
+        name="Cloud Evidence Review",
+        summary="Offline review workflow for exported cloud configuration evidence.",
+        category="cloud-security",
+        requires_authorization=True,
+    ),
+    Module(
+        id="log-correlation",
+        name="Log Correlation",
+        summary="Offline normalization and timestamp correlation for supplied logs.",
+        category="incident-response",
+        requires_authorization=False,
+    ),
 )
 
 
