@@ -54,6 +54,20 @@ with `CYTOOL_SERVER_KEY` set. It provides a local authenticated
 `POST /v1/chat/completions` proxy to your configured provider and must bind to
 localhost.
 
+## Tool packs and log correlation
+
+Tool packs are explicit, non-executing downloads. Register a JSON manifest with
+an HTTPS source and its expected SHA-256, then fetch it only when needed.
+Failed integrity checks delete the downloaded file. A `file://` source is also
+allowed solely for local development and tests.
+
+```bash
+cytool toolpacks register ./my-toolpack.json --workspace research-lab
+cytool toolpacks fetch my-toolpack --workspace research-lab
+cytool modules install log-correlation --workspace research-lab
+cytool logs correlate ./auth.log ./web.log --workspace research-lab
+```
+
 ## Quick start
 
 Requires Python 3.11 or later.

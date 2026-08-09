@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import hashlib
 
 from cytool_ai.cli import main
 from cytool_ai.paths import workspace_path
 from cytool_ai.approval import ApprovalMode
 from cytool_ai.terminal import execute, redact
+from cytool_ai.toolpacks import fetch, register
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -62,3 +64,19 @@ def test_terminal_modes_redact_and_do_not_use_a_shell(tmp_path):
     else:
         raise AssertionError("shell syntax must be rejected")
     assert "[REDACTED]" in redact("api_key=should-not-leak")
+
+
+def test_verified_toolpack_is_saved_but_never_executed(monkeypatch, tmp_path):
+    monkeypatch.setenv("CYTOOL_HOME", str(tmp_path / "state"))
+    main(["init", "lab"])
+    source = tmp_path / "sample-pack.bin"
+    source.write_bytes(b"verified fixture")
+    manifest = tmp_path / "pack.json"
+    manifest.write_text(json.dumps({
+        "id": "fixture-pack", "name": "Fixture", "summary": "test", "version": "1.0",
+        "source": source.as_uri(), "sha256": hashlib.sha256(source.read_bytes()).hexdigest(),
+    }))
+    workspace = workspace_path("lab")
+    register(workspace, manifest)
+    downloaded = fetch(workspace, "fixture-pack")
+    assert downloaded.read_bytes() == source.read_bytes()

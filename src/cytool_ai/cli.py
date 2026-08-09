@@ -17,6 +17,10 @@ from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
 from .terminal import execute
+from .toolpacks import fetch as fetch_toolpack
+from .toolpacks import register as register_toolpack
+from .toolpacks import registered as registered_toolpacks
+from .logs import correlate
 from .workspaces import create, open_workspace
 
 
@@ -73,6 +77,23 @@ def build_parser() -> argparse.ArgumentParser:
     terminal.add_argument("--workspace", required=True)
     terminal.add_argument("--mode", choices=[mode.value for mode in ApprovalMode], default=ApprovalMode.PLAN.value)
     terminal.add_argument("--cwd", default=".", help="directory in which to run the command")
+
+    toolpacks = commands.add_parser("toolpacks", help="register and fetch integrity-verified, non-executable tool packs")
+    toolpack_commands = toolpacks.add_subparsers(dest="toolpack_command", required=True)
+    toolpack_list = toolpack_commands.add_parser("list", help="list registered tool packs")
+    toolpack_list.add_argument("--workspace", required=True)
+    toolpack_register = toolpack_commands.add_parser("register", help="register a local JSON tool-pack manifest")
+    toolpack_register.add_argument("manifest")
+    toolpack_register.add_argument("--workspace", required=True)
+    toolpack_fetch = toolpack_commands.add_parser("fetch", help="download a registered pack and verify SHA-256")
+    toolpack_fetch.add_argument("pack_id")
+    toolpack_fetch.add_argument("--workspace", required=True)
+
+    logs = commands.add_parser("logs", help="offline analysis of supplied text logs")
+    log_commands = logs.add_subparsers(dest="log_command", required=True)
+    log_correlate = log_commands.add_parser("correlate", help="merge and order timestamped log lines")
+    log_correlate.add_argument("paths", nargs="+")
+    log_correlate.add_argument("--workspace", required=True)
 
     ai = commands.add_parser("ai", help="OpenAI-compatible assistant workflows")
     ai_commands = ai.add_subparsers(dest="ai_command", required=True)
@@ -161,6 +182,31 @@ def main(argv: Sequence[str] | None = None) -> int:
             record(workspace, "terminal.command", command=list(result.command), mode=result.mode, executed=result.executed, returncode=result.returncode)
             print(json.dumps({"authorization": description(mode), **result.__dict__}, indent=2))
             return 0 if result.returncode in {None, 0} else result.returncode
+        if args.command == "toolpacks" and args.toolpack_command == "list":
+            packs = registered_toolpacks(open_workspace(args.workspace))
+            print(json.dumps({pack_id: pack.__dict__ for pack_id, pack in packs.items()}, indent=2))
+            return 0
+        if args.command == "toolpacks" and args.toolpack_command == "register":
+            workspace = open_workspace(args.workspace)
+            pack = register_toolpack(workspace, Path(args.manifest))
+            record(workspace, "toolpack.registered", pack_id=pack.id, version=pack.version)
+            print(f"Registered {pack.id} ({pack.version}); it has not been downloaded or executed.")
+            return 0
+        if args.command == "toolpacks":
+            workspace = open_workspace(args.workspace)
+            archive = fetch_toolpack(workspace, args.pack_id)
+            record(workspace, "toolpack.fetched", pack_id=args.pack_id, archive=str(archive))
+            print(f"Verified download saved to {archive}. It has not been executed.")
+            return 0
+        if args.command == "logs":
+            workspace = open_workspace(args.workspace)
+            if "log-correlation" not in installed(workspace):
+                raise RuntimeError("module is not installed: log-correlation")
+            evidence = correlate([Path(path) for path in args.paths])
+            report_path = write_report(workspace, "Log correlation", evidence)
+            record(workspace, "logs.correlated", sources=evidence["sources"], event_count=evidence["event_count"])
+            print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
+            return 0
         if args.command == "ai" and args.ai_command == "configure":
             settings = configure(args.base_url, args.model, args.api_key_env)
             print(f"Configured {settings.base_url} with model {settings.model}; key remains in ${settings.api_key_env}.")
