@@ -14,6 +14,10 @@ from .audit import read, record
 from .findings import list_all
 from .iocs import list_all as list_iocs
 from .modules import install, installed, registry
+from .policy import Scope, save, validate_target
+from .investigations import web_evidence, web_input_surface
+from .reports import write_report
+from .findings import add
 from .workspaces import open_workspace
 
 
@@ -68,15 +72,58 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             self.send_json(payload)
 
         def do_POST(self) -> None:  # noqa: N802
+            def request_json() -> dict[str, object]:
+                length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 64 * 1024:
+                    raise ValueError("invalid request size")
+                payload = json.loads(self.rfile.read(length))
+                if not isinstance(payload, dict):
+                    raise ValueError("request body must be an object")
+                return payload
+
+            if self.path == "/api/scope":
+                try:
+                    payload = request_json()
+                    domains = tuple(str(domain).strip().lower().rstrip(".") for domain in payload.get("domains", []) if str(domain).strip())
+                    scope = Scope(str(payload.get("engagement", "")), str(payload.get("authorized_by", "")), domains)
+                    save(workspace, scope)
+                    record(workspace, "scope.declared_from_dashboard", engagement=scope.engagement, domains=domains)
+                    self.send_json({"engagement": scope.engagement, "domains": domains}, 201)
+                except (ValueError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/web/review":
+                try:
+                    payload = request_json()
+                    if "web-scope-check" not in installed(workspace):
+                        raise PermissionError("install the web-scope-check module before running a web review")
+                    if payload.get("authorized") is not True:
+                        raise PermissionError("confirm authorization before requesting a target")
+                    mode = str(payload.get("mode", "headers"))
+                    if mode not in {"headers", "forms"}:
+                        raise ValueError("mode must be headers or forms")
+                    url = str(payload.get("url", ""))
+                    validate_target(workspace, url)
+                    evidence = web_evidence(url) if mode == "headers" else web_input_surface(url)
+                    title = "Web response-header review" if mode == "headers" else "Web input-surface inventory"
+                    report = write_report(workspace, title, evidence)
+                    add(workspace, title, report, "low" if mode == "headers" and evidence.get("missing_recommended_headers") else "info")
+                    record(workspace, "web.reviewed_from_dashboard", mode=mode, url=url, status=evidence["status"])
+                    self.send_json({"evidence": evidence, "report": str(report)}, 201)
+                except (ValueError, PermissionError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
             if self.path == "/api/artifacts/inspect":
                 try:
+                    if "artifact-inspector" not in installed(workspace):
+                        raise PermissionError("install the artifact-inspector module before inspecting uploads")
                     length = int(self.headers.get("Content-Length", "0"))
                     if not 0 < length <= MAX_UPLOAD_BYTES:
                         raise ValueError("provide an artifact no larger than 100 MiB")
                     filename = self.headers.get("X-Cytool-Filename", "uploaded-artifact.bin")
                     result = inspect_upload(workspace, filename, self.rfile.read(length))
                     self.send_json(result, 201)
-                except (ValueError, OSError) as exc:
+                except (ValueError, PermissionError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
             prefix = "/api/modules/"

@@ -14,6 +14,7 @@ from cytool_ai.exports import write_sarif, write_stix
 from cytool_ai.findings import add
 from cytool_ai.iocs import extract
 from cytool_ai.artifacts import inspect_upload
+from cytool_ai.policy import Scope, save, validate_target
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -144,3 +145,10 @@ def test_uploaded_artifact_is_stored_and_inspected(tmp_path):
     result = inspect_upload(workspace, "sample.bin", b"MZlocal-test")
     assert Path(result["artifact"]).is_file()
     assert result["evidence"]["sha256"]
+
+
+def test_scope_saved_for_dashboard_web_workflow(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    save(workspace, Scope("review", "owner", ("example.com",)))
+    assert validate_target(workspace, "https://api.example.com/login") == "api.example.com"
