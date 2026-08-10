@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+from pathlib import Path
 
 from cytool_ai.cli import main
 from cytool_ai.paths import workspace_path
@@ -12,6 +13,7 @@ from cytool_ai.investigations import binary_metadata, cloud_export_review, memor
 from cytool_ai.exports import write_sarif, write_stix
 from cytool_ai.findings import add
 from cytool_ai.iocs import extract
+from cytool_ai.artifacts import inspect_upload
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -133,3 +135,12 @@ def test_ioc_extraction_and_stix_export(tmp_path):
     assert any(value["kind"] == "url" for value in values)
     output = write_stix(workspace, tmp_path / "iocs.stix.json")
     assert json.loads(output.read_text())["type"] == "bundle"
+
+
+def test_uploaded_artifact_is_stored_and_inspected(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "artifacts").mkdir(parents=True)
+    (workspace / "findings").mkdir()
+    result = inspect_upload(workspace, "sample.bin", b"MZlocal-test")
+    assert Path(result["artifact"]).is_file()
+    assert result["evidence"]["sha256"]

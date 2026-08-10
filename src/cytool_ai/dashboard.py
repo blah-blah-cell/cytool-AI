@@ -9,6 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .ai import chat, configured
+from .artifacts import MAX_UPLOAD_BYTES, inspect_upload
 from .audit import read, record
 from .findings import list_all
 from .iocs import list_all as list_iocs
@@ -67,6 +68,17 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             self.send_json(payload)
 
         def do_POST(self) -> None:  # noqa: N802
+            if self.path == "/api/artifacts/inspect":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= MAX_UPLOAD_BYTES:
+                        raise ValueError("provide an artifact no larger than 100 MiB")
+                    filename = self.headers.get("X-Cytool-Filename", "uploaded-artifact.bin")
+                    result = inspect_upload(workspace, filename, self.rfile.read(length))
+                    self.send_json(result, 201)
+                except (ValueError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
             prefix = "/api/modules/"
             suffix = "/install"
             if self.path.startswith(prefix) and self.path.endswith(suffix):
