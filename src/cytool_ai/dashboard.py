@@ -6,12 +6,13 @@ import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from urllib.parse import unquote
 
 from .ai import chat, configured
-from .audit import read
+from .audit import read, record
 from .findings import list_all
 from .iocs import list_all as list_iocs
-from .modules import registry
+from .modules import install, installed, registry
 from .workspaces import open_workspace
 
 
@@ -24,6 +25,14 @@ def serve(workspace_name: str, host: str, port: int) -> None:
     workspace = open_workspace(workspace_name)
 
     class Handler(BaseHTTPRequestHandler):
+        def send_json(self, payload: object, status: int = 200) -> None:
+            encoded = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/health":
                 payload = {"status": "ok", "service": "cytool-ai"}
@@ -42,7 +51,8 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     return
                 payload = {"object": "list", "data": [{"id": model, "object": "model", "owned_by": "cytool-ai"}]}
             elif self.path == "/api/modules":
-                payload = {"modules": [module.__dict__ for module in registry().values()]}
+                active = installed(workspace)
+                payload = {"modules": [{**module.__dict__, "installed": module.id in active} for module in registry().values()]}
             elif self.path == "/api/audit":
                 payload = {"events": read(workspace)}
             elif self.path == "/api/findings":
@@ -54,14 +64,20 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             else:
                 self.send_error(404, "not found")
                 return
-            encoded = json.dumps(payload).encode("utf-8")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.send_header("Content-Length", str(len(encoded)))
-            self.end_headers()
-            self.wfile.write(encoded)
+            self.send_json(payload)
 
         def do_POST(self) -> None:  # noqa: N802
+            prefix = "/api/modules/"
+            suffix = "/install"
+            if self.path.startswith(prefix) and self.path.endswith(suffix):
+                module_id = unquote(self.path[len(prefix):-len(suffix)])
+                try:
+                    module = install(workspace, module_id)
+                    record(workspace, "module.installed_from_dashboard", module_id=module.id, version=module.version)
+                    self.send_json({"installed": module.id}, 201)
+                except KeyError:
+                    self.send_json({"error": "unknown module"}, 404)
+                return
             if self.path != "/v1/chat/completions":
                 self.send_error(404, "not found")
                 return
