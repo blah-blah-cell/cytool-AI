@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from .ai import chat, configured
+from .ai import build_context, chat, configured, response_text
 from .artifacts import MAX_UPLOAD_BYTES, inspect_upload, store_upload
 from .audit import read, record
 from .findings import list_all
@@ -114,6 +114,28 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     record(workspace, "web.reviewed_from_dashboard", mode=mode, url=url, status=evidence["status"])
                     self.send_json({"evidence": evidence, "report": str(report)}, 201)
                 except (ValueError, PermissionError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/ai":
+                try:
+                    payload = request_json()
+                    workflow = str(payload.get("workflow", "ask"))
+                    if workflow not in {"ask", "teach", "fix"}:
+                        raise ValueError("workflow must be ask, teach, or fix")
+                    prompt = str(payload.get("prompt", "")).strip()
+                    if not 1 <= len(prompt) <= 20_000:
+                        raise ValueError("prompt must be between 1 and 20,000 characters")
+                    include_terminal = payload.get("terminal_context") is True
+                    prefixes = {
+                        "ask": "Answer this with practical, authorization-first guidance:\n",
+                        "teach": "Teach this clearly, using the supplied context and emphasizing safe, authorized practice:\n",
+                        "fix": "Analyze this and propose a reviewable remediation plan. Do not execute commands:\n",
+                    }
+                    response = chat([{"role": "user", "content": prefixes[workflow] + prompt}], context=build_context(workspace, include_terminal, Path.cwd()))
+                    answer = response_text(response)
+                    record(workspace, "ai.request_from_dashboard", workflow=workflow, terminal_context=include_terminal)
+                    self.send_json({"workflow": workflow, "answer": answer}, 201)
+                except (ValueError, PermissionError, RuntimeError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
             if self.path == "/api/logs/correlate":

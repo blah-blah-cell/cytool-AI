@@ -15,6 +15,7 @@ from cytool_ai.findings import add
 from cytool_ai.iocs import extract
 from cytool_ai.artifacts import inspect_upload, store_upload
 from cytool_ai.policy import Scope, save, validate_target
+from cytool_ai.ai import build_context
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -160,3 +161,11 @@ def test_stored_upload_is_available_for_follow_up_workflows(tmp_path):
     stored = store_upload(workspace, "auth.log", b"2026-08-10T12:00:00Z login")
     assert stored.name == "auth.log"
     assert stored.read_bytes().endswith(b"login")
+
+
+def test_ai_context_requires_explicit_terminal_opt_in(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    context = build_context(workspace, False, tmp_path)
+    assert context["workspace"] == "workspace"
+    assert "terminal_snapshot" not in context
