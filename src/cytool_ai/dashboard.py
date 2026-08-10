@@ -9,7 +9,7 @@ from pathlib import Path
 from urllib.parse import unquote
 
 from .ai import chat, configured
-from .artifacts import MAX_UPLOAD_BYTES, inspect_upload
+from .artifacts import MAX_UPLOAD_BYTES, inspect_upload, store_upload
 from .audit import read, record
 from .findings import list_all
 from .iocs import list_all as list_iocs
@@ -18,6 +18,7 @@ from .policy import Scope, save, validate_target
 from .investigations import web_evidence, web_input_surface
 from .reports import write_report
 from .findings import add
+from .logs import correlate
 from .workspaces import open_workspace
 
 
@@ -66,6 +67,8 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 payload = {"workspace": workspace.name, "audit_events": len(read(workspace)), "findings": len(list_all(workspace)), "iocs": len(list_iocs(workspace)), "modules": len(registry())}
             elif self.path == "/api/iocs":
                 payload = {"iocs": list_iocs(workspace)}
+            elif self.path == "/api/artifacts":
+                payload = {"artifacts": [{"name": path.name, "size_bytes": path.stat().st_size} for path in sorted((workspace / "artifacts").iterdir()) if path.is_file()]}
             else:
                 self.send_error(404, "not found")
                 return
@@ -113,6 +116,29 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 except (ValueError, PermissionError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
+            if self.path == "/api/logs/correlate":
+                try:
+                    payload = request_json()
+                    if "log-correlation" not in installed(workspace):
+                        raise PermissionError("install the log-correlation module before correlating logs")
+                    names = payload.get("artifacts", [])
+                    if not isinstance(names, list) or not 1 <= len(names) <= 20:
+                        raise ValueError("select between 1 and 20 uploaded log files")
+                    paths = []
+                    artifact_root = (workspace / "artifacts").resolve()
+                    for name in names:
+                        candidate = (artifact_root / Path(str(name)).name).resolve()
+                        if artifact_root not in candidate.parents or not candidate.is_file():
+                            raise ValueError("selected log artifact was not found")
+                        paths.append(candidate)
+                    evidence = correlate(paths)
+                    report = write_report(workspace, "Log correlation", evidence)
+                    add(workspace, "Log correlation", report)
+                    record(workspace, "logs.correlated_from_dashboard", sources=evidence["sources"], event_count=evidence["event_count"])
+                    self.send_json({"evidence": evidence, "report": str(report)}, 201)
+                except (ValueError, PermissionError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
             if self.path == "/api/artifacts/inspect":
                 try:
                     if "artifact-inspector" not in installed(workspace):
@@ -123,6 +149,18 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     filename = self.headers.get("X-Cytool-Filename", "uploaded-artifact.bin")
                     result = inspect_upload(workspace, filename, self.rfile.read(length))
                     self.send_json(result, 201)
+                except (ValueError, PermissionError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/artifacts/upload":
+                try:
+                    length = int(self.headers.get("Content-Length", "0"))
+                    if not 0 < length <= MAX_UPLOAD_BYTES:
+                        raise ValueError("provide an artifact no larger than 100 MiB")
+                    filename = self.headers.get("X-Cytool-Filename", "uploaded-evidence.bin")
+                    destination = store_upload(workspace, filename, self.rfile.read(length))
+                    record(workspace, "artifact.uploaded", filename=destination.name, size_bytes=destination.stat().st_size)
+                    self.send_json({"artifact": destination.name, "size_bytes": destination.stat().st_size}, 201)
                 except (ValueError, PermissionError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return

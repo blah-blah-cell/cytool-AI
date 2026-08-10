@@ -13,7 +13,7 @@ from cytool_ai.investigations import binary_metadata, cloud_export_review, memor
 from cytool_ai.exports import write_sarif, write_stix
 from cytool_ai.findings import add
 from cytool_ai.iocs import extract
-from cytool_ai.artifacts import inspect_upload
+from cytool_ai.artifacts import inspect_upload, store_upload
 from cytool_ai.policy import Scope, save, validate_target
 
 
@@ -152,3 +152,11 @@ def test_scope_saved_for_dashboard_web_workflow(tmp_path):
     workspace.mkdir()
     save(workspace, Scope("review", "owner", ("example.com",)))
     assert validate_target(workspace, "https://api.example.com/login") == "api.example.com"
+
+
+def test_stored_upload_is_available_for_follow_up_workflows(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "artifacts").mkdir(parents=True)
+    stored = store_upload(workspace, "auth.log", b"2026-08-10T12:00:00Z login")
+    assert stored.name == "auth.log"
+    assert stored.read_bytes().endswith(b"login")

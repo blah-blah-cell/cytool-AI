@@ -13,8 +13,8 @@ from .reports import write_report
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
 
 
-def inspect_upload(workspace: Path, filename: str, data: bytes) -> dict[str, object]:
-    """Store and inspect an uploaded artifact without executing it."""
+def store_upload(workspace: Path, filename: str, data: bytes) -> Path:
+    """Store user-provided evidence without executing it."""
     safe_name = Path(filename).name.strip() or "uploaded-artifact.bin"
     if safe_name in {".", ".."}:
         raise ValueError("invalid artifact filename")
@@ -28,6 +28,12 @@ def inspect_upload(workspace: Path, filename: str, data: bytes) -> dict[str, obj
             destination = workspace / "artifacts" / f"{stem}-{index}{suffix}"
             index += 1
     destination.write_bytes(data)
+    return destination
+
+
+def inspect_upload(workspace: Path, filename: str, data: bytes) -> dict[str, object]:
+    """Store and inspect an uploaded artifact without executing it."""
+    destination = store_upload(workspace, filename, data)
     evidence = inspect_file(destination)
     report = write_report(workspace, "Uploaded artifact inspection", evidence)
     add(workspace, "Uploaded artifact inspection", report)
