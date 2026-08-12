@@ -11,13 +11,13 @@ from urllib.parse import unquote
 from .ai import build_context, chat, configured, response_text
 from .artifacts import MAX_UPLOAD_BYTES, inspect_upload, store_upload
 from .audit import read, record
-from .findings import list_all
+from .findings import add, list_all
 from .iocs import list_all as list_iocs
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
-from .investigations import web_evidence, web_input_surface
+from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .reports import write_report
-from .findings import add
+from .iocs import extract as extract_iocs
 from .logs import correlate
 from .workspaces import open_workspace
 
@@ -136,6 +136,44 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     record(workspace, "ai.request_from_dashboard", workflow=workflow, terminal_context=include_terminal)
                     self.send_json({"workflow": workflow, "answer": answer}, 201)
                 except (ValueError, PermissionError, RuntimeError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/offline/analyze":
+                try:
+                    payload = request_json()
+                    workflow = str(payload.get("workflow", ""))
+                    workflow_config = {
+                        "binary": ("binary-fingerprint", "Binary metadata", False),
+                        "memory": ("memory-artifact-triage", "Memory artifact triage", True),
+                        "cloud": ("cloud-evidence-review", "Cloud export posture review", True),
+                        "ioc": ("artifact-inspector", "IOC extraction", False),
+                    }
+                    if workflow not in workflow_config:
+                        raise ValueError("workflow must be binary, memory, cloud, or ioc")
+                    module_id, title, requires_authorization = workflow_config[workflow]
+                    if module_id not in installed(workspace):
+                        raise PermissionError(f"install the {module_id} module before running this workflow")
+                    if requires_authorization and payload.get("authorized") is not True:
+                        raise PermissionError("confirm authorization before running this workflow")
+                    name = Path(str(payload.get("artifact", ""))).name
+                    path = (workspace / "artifacts" / name).resolve()
+                    if path.parent != (workspace / "artifacts").resolve() or not path.is_file():
+                        raise ValueError("select an uploaded artifact")
+                    if workflow == "binary":
+                        evidence = binary_metadata(path)
+                    elif workflow == "memory":
+                        evidence = memory_artifact_scan(path)
+                    elif workflow == "cloud":
+                        evidence = cloud_export_review(path)
+                    else:
+                        indicators = extract_iocs(workspace, path)
+                        evidence = {"path": str(path), "indicator_count": len(indicators), "indicators": indicators}
+                    report = write_report(workspace, title, evidence)
+                    severity = "medium" if workflow == "cloud" and evidence.get("finding_count") else "info"
+                    add(workspace, title, report, severity)
+                    record(workspace, "offline.workflow_from_dashboard", workflow=workflow, artifact=name)
+                    self.send_json({"evidence": evidence, "report": str(report)}, 201)
+                except (ValueError, PermissionError, OSError, json.JSONDecodeError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
             if self.path == "/api/logs/correlate":

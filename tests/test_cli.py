@@ -16,6 +16,7 @@ from cytool_ai.iocs import extract
 from cytool_ai.artifacts import inspect_upload, store_upload
 from cytool_ai.policy import Scope, save, validate_target
 from cytool_ai.ai import build_context
+from cytool_ai.iocs import extract as extract_iocs
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -169,3 +170,11 @@ def test_ai_context_requires_explicit_terminal_opt_in(tmp_path):
     context = build_context(workspace, False, tmp_path)
     assert context["workspace"] == "workspace"
     assert "terminal_snapshot" not in context
+
+
+def test_uploaded_artifact_can_feed_ioc_analysis(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "artifacts").mkdir(parents=True)
+    stored = store_upload(workspace, "network.txt", b"https://indicator.example/path 203.0.113.15")
+    values = extract_iocs(workspace, stored)
+    assert {item["kind"] for item in values} >= {"url", "ipv4-addr"}
