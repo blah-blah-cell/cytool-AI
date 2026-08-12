@@ -6,6 +6,8 @@ import json
 from datetime import UTC, datetime
 from pathlib import Path
 
+from .state import atomic_write_text, workspace_lock
+
 
 def _path(workspace: Path) -> Path:
     return workspace / "finding-index.json"
@@ -13,9 +15,10 @@ def _path(workspace: Path) -> Path:
 
 def add(workspace: Path, title: str, report: Path, severity: str = "info") -> dict[str, str]:
     item = {"id": datetime.now(UTC).strftime("f-%Y%m%dT%H%M%S%fZ"), "title": title, "severity": severity, "report": str(report), "created_at": datetime.now(UTC).isoformat()}
-    entries = list_all(workspace)
-    entries.append(item)
-    _path(workspace).write_text(json.dumps(entries, indent=2) + "\n", encoding="utf-8")
+    with workspace_lock(workspace):
+        entries = list_all(workspace)
+        entries.append(item)
+        atomic_write_text(_path(workspace), json.dumps(entries, indent=2) + "\n")
     return item
 
 

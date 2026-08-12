@@ -19,6 +19,7 @@ from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
 from cytool_ai.modules import registry
+from cytool_ai.state import atomic_write_text
 from cytool_ai.operations import backup, doctor
 from cytool_ai.findings import list_all as workspace_findings
 from cytool_ai.ai import configure
@@ -229,3 +230,10 @@ def test_export_payloads_support_dashboard_downloads(tmp_path):
 def test_module_registry_lists_only_implemented_workflows():
     assert "memory-capture-review" not in registry()
     assert "memory-artifact-triage" in registry()
+
+
+def test_atomic_state_write_replaces_file_contents(tmp_path):
+    destination = tmp_path / "state.json"
+    atomic_write_text(destination, '{"version": 1}\n')
+    atomic_write_text(destination, '{"version": 2}\n')
+    assert json.loads(destination.read_text())["version"] == 2

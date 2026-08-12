@@ -7,6 +7,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from urllib.parse import urlparse
 
+from .state import atomic_write_text, workspace_lock
+
 
 @dataclass(frozen=True)
 class Scope:
@@ -24,7 +26,8 @@ def save(workspace: Path, scope: Scope) -> None:
         raise ValueError("engagement and authorized-by are required")
     if not scope.domains:
         raise ValueError("at least one approved domain is required")
-    _path(workspace).write_text(json.dumps(asdict(scope), indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with workspace_lock(workspace):
+        atomic_write_text(_path(workspace), json.dumps(asdict(scope), indent=2, sort_keys=True) + "\n")
 
 
 def load(workspace: Path) -> Scope:

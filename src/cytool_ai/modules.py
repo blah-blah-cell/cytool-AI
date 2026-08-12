@@ -10,6 +10,8 @@ import json
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
+from .state import atomic_write_text, workspace_lock
+
 
 @dataclass(frozen=True)
 class Module:
@@ -84,7 +86,8 @@ def install(workspace: Path, module_id: str) -> Module:
     module = registry().get(module_id)
     if module is None:
         raise KeyError(f"unknown module: {module_id}")
-    active = installed(workspace)
-    active[module_id] = asdict(module)
-    installed_path(workspace).write_text(json.dumps(active, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    with workspace_lock(workspace):
+        active = installed(workspace)
+        active[module_id] = asdict(module)
+        atomic_write_text(installed_path(workspace), json.dumps(active, indent=2, sort_keys=True) + "\n")
     return module

@@ -9,6 +9,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .state import atomic_write_text, workspace_lock
+
 
 URL = re.compile(r"https?://[^\s\"'<>]{6,512}", re.I)
 IPV4 = re.compile(r"\b(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)\b")
@@ -40,11 +42,12 @@ def extract(workspace: Path, source: Path) -> list[dict[str, str]]:
     content = source.read_bytes()
     text = content.decode("utf-8", errors="replace")
     now = datetime.now(UTC).isoformat()
-    existing = {(ioc["kind"], ioc["value"]): ioc for ioc in list_all(workspace)}
-    for kind, value in _values(text):
-        existing.setdefault((kind, value), {"kind": kind, "value": value, "source": str(source.resolve()), "first_seen": now})
-    sha = hashlib.sha256(content).hexdigest()
-    existing.setdefault(("file:hashes.SHA-256", sha), {"kind": "file:hashes.SHA-256", "value": sha, "source": str(source.resolve()), "first_seen": now})
-    values = sorted(existing.values(), key=lambda entry: (entry["kind"], entry["value"]))
-    _path(workspace).write_text(json.dumps(values, indent=2) + "\n", encoding="utf-8")
+    with workspace_lock(workspace):
+        existing = {(ioc["kind"], ioc["value"]): ioc for ioc in list_all(workspace)}
+        for kind, value in _values(text):
+            existing.setdefault((kind, value), {"kind": kind, "value": value, "source": str(source.resolve()), "first_seen": now})
+        sha = hashlib.sha256(content).hexdigest()
+        existing.setdefault(("file:hashes.SHA-256", sha), {"kind": "file:hashes.SHA-256", "value": sha, "source": str(source.resolve()), "first_seen": now})
+        values = sorted(existing.values(), key=lambda entry: (entry["kind"], entry["value"]))
+        atomic_write_text(_path(workspace), json.dumps(values, indent=2) + "\n")
     return values
