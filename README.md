@@ -65,6 +65,19 @@ cytool dashboard --workspace research-lab
 By default, workspaces are stored in `~/.local/share/cytool-ai/workspaces`.
 Set `CYTOOL_HOME` to use another parent directory.
 
+## Dashboard workflows
+
+The localhost dashboard is a functional console, not only a report viewer. It
+lets you install modules, upload and statically inspect evidence, choose
+uploaded artifacts for binary/memory/cloud/IOC analysis, correlate uploaded
+logs, declare web scope, run passive web review, use optional local RE tools,
+view reports, and download SARIF/STIX case exports.
+
+Each action uses the same module and authorization checks as the CLI, writes an
+audit event, and generates a local report/finding where applicable. The AI panel
+stores provider configuration without an API key; export the key in the shell
+that starts the dashboard before making an AI request.
+
 ## Typical workflows
 
 ### Binary and reverse-engineering evidence
