@@ -8,6 +8,7 @@ from .analysis import inspect_file
 from .audit import record
 from .findings import add
 from .reports import write_report
+from .state import workspace_lock
 
 
 MAX_UPLOAD_BYTES = 100 * 1024 * 1024
@@ -20,14 +21,15 @@ def store_upload(workspace: Path, filename: str, data: bytes) -> Path:
         raise ValueError("invalid artifact filename")
     if len(data) > MAX_UPLOAD_BYTES:
         raise ValueError("artifact exceeds the 100 MiB upload limit")
-    destination = workspace / "artifacts" / safe_name
-    if destination.exists():
-        stem, suffix = destination.stem, destination.suffix
-        index = 2
-        while destination.exists():
-            destination = workspace / "artifacts" / f"{stem}-{index}{suffix}"
-            index += 1
-    destination.write_bytes(data)
+    with workspace_lock(workspace):
+        destination = workspace / "artifacts" / safe_name
+        if destination.exists():
+            stem, suffix = destination.stem, destination.suffix
+            index = 2
+            while destination.exists():
+                destination = workspace / "artifacts" / f"{stem}-{index}{suffix}"
+                index += 1
+        destination.write_bytes(data)
     return destination
 
 

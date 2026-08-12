@@ -20,6 +20,7 @@ from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
 from cytool_ai.modules import registry
 from cytool_ai.state import atomic_write_text
+from cytool_ai.reports import write_report
 from cytool_ai.operations import backup, doctor
 from cytool_ai.findings import list_all as workspace_findings
 from cytool_ai.ai import configure
@@ -237,3 +238,12 @@ def test_atomic_state_write_replaces_file_contents(tmp_path):
     atomic_write_text(destination, '{"version": 1}\n')
     atomic_write_text(destination, '{"version": 2}\n')
     assert json.loads(destination.read_text())["version"] == 2
+
+
+def test_reports_do_not_collide_within_one_second(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "findings").mkdir(parents=True)
+    first = write_report(workspace, "first", {"value": 1})
+    second = write_report(workspace, "second", {"value": 2})
+    assert first != second
+    assert first.is_file() and second.is_file()

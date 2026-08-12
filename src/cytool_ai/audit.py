@@ -7,6 +7,8 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
+from .state import workspace_lock
+
 
 def record(workspace: Path, event: str, **details: Any) -> dict[str, Any]:
     payload = {
@@ -15,8 +17,10 @@ def record(workspace: Path, event: str, **details: Any) -> dict[str, Any]:
         "details": details,
     }
     audit_file = workspace / "audit.jsonl"
-    with audit_file.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+    with workspace_lock(workspace):
+        with audit_file.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(payload, sort_keys=True) + "\n")
+            handle.flush()
     return payload
 
 
@@ -24,4 +28,5 @@ def read(workspace: Path) -> list[dict[str, Any]]:
     audit_file = workspace / "audit.jsonl"
     if not audit_file.exists():
         return []
-    return [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines() if line]
+    with workspace_lock(workspace):
+        return [json.loads(line) for line in audit_file.read_text(encoding="utf-8").splitlines() if line]
