@@ -18,6 +18,7 @@ from cytool_ai.policy import Scope, save, validate_target
 from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
+from cytool_ai.modules import registry
 from cytool_ai.operations import backup, doctor
 from cytool_ai.findings import list_all as workspace_findings
 from cytool_ai.ai import configure
@@ -223,3 +224,8 @@ def test_export_payloads_support_dashboard_downloads(tmp_path):
     workspace.mkdir()
     assert sarif_payload(workspace)["version"] == "2.1.0"
     assert stix_payload(workspace)["type"] == "bundle"
+
+
+def test_module_registry_lists_only_implemented_workflows():
+    assert "memory-capture-review" not in registry()
+    assert "memory-artifact-triage" in registry()

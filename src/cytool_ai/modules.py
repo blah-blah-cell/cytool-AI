@@ -30,16 +30,9 @@ BUILTIN_MODULES = (
         requires_authorization=False,
     ),
     Module(
-        id="memory-capture-review",
-        name="Memory Capture Review",
-        summary="Reserved workflow for offline analysis of supplied memory captures.",
-        category="memory-forensics",
-        requires_authorization=True,
-    ),
-    Module(
         id="web-scope-check",
         name="Web Scope Check",
-        summary="Reserved workflow for validating a declared, authorized web assessment scope.",
+        summary="Scope validation and passive evidence review for an authorized web target.",
         category="web-security",
         requires_authorization=True,
     ),
