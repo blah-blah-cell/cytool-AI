@@ -250,6 +250,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise RuntimeError(f"module is not installed: {args.module}")
             evidence = inspect_file(Path(args.path))
             report_path = write_report(workspace, f"{args.module}: evidence inspection", evidence)
+            add_finding(workspace, f"{args.module}: evidence inspection", report_path)
             if args.ai_bundle:
                 bundle_path = write_ai_bundle(workspace, "Summarize and prioritize supplied offline evidence.", evidence)
                 print(f"AI evidence bundle: {bundle_path}")
@@ -260,6 +261,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             workspace = open_workspace(args.workspace)
             evidence = json.loads(Path(args.evidence_json).read_text(encoding="utf-8"))
             report_path = write_report(workspace, args.title, evidence)
+            add_finding(workspace, args.title, report_path)
             record(workspace, "report.created", report=str(report_path))
             print(report_path)
             return 0

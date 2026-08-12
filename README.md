@@ -5,7 +5,7 @@ cytool-AI is a Linux-first, local-first cybersecurity automation workspace for
 collection, case management, a local dashboard, optional AI assistance, and
 integrity-verified tool packs without silently executing downloaded code.
 
-> Status: early v0.1. The core control plane and initial evidence workflows are
+> Status: v0.2 beta. The core control plane and initial evidence workflows are
 > implemented. See [What works today](#what-works-today) for the exact scope.
 
 ## Why cytool-AI
@@ -162,7 +162,12 @@ and remote runner profiles are descriptive in v0.1 and do not start anything.
 
 ```bash
 PYTHONPATH=src python3 -m pytest
+bash scripts/smoke-test.sh
+python3 -m pip wheel --no-deps . -w dist
 ```
+
+Every push and pull request runs this same test, smoke-test, and wheel-build
+sequence through GitHub Actions.
 
 ## Operations
 

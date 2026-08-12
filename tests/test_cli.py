@@ -11,7 +11,7 @@ from cytool_ai.terminal import execute, redact
 from cytool_ai.toolpacks import fetch, register
 from cytool_ai.investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_input_surface
 from cytool_ai.exports import write_sarif, write_stix
-from cytool_ai.findings import add
+from cytool_ai.findings import add, list_all
 from cytool_ai.iocs import extract
 from cytool_ai.artifacts import inspect_upload, store_upload
 from cytool_ai.policy import Scope, save, validate_target
@@ -52,6 +52,7 @@ def test_inspection_writes_report_and_ai_bundle(monkeypatch, tmp_path, capsys):
     workspace = workspace_path("lab")
     assert list((workspace / "findings").glob("report-*.md"))
     assert list((workspace / "findings").glob("ai-bundle-*.json"))
+    assert list_all(workspace)
 
 
 def test_scope_prevents_out_of_scope_target(monkeypatch, tmp_path, capsys):
