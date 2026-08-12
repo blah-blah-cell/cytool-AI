@@ -19,6 +19,7 @@ from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
 from cytool_ai.operations import backup, doctor
+from cytool_ai.findings import list_all as workspace_findings
 from cytool_ai.ai import configure
 
 
@@ -206,3 +207,12 @@ def test_provider_configuration_stores_no_api_key(monkeypatch, tmp_path):
     assert settings.model == "model-a"
     assert "TEST_PROVIDER_KEY" in saved
     assert "secret" not in saved.lower()
+
+
+def test_findings_keep_report_references(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    report = workspace / "report.md"
+    report.write_text("# Case report")
+    add(workspace, "Report", report)
+    assert workspace_findings(workspace)[0]["report"] == str(report)

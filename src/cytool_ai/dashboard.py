@@ -41,6 +41,14 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             self.end_headers()
             self.wfile.write(encoded)
 
+        def send_text(self, payload: str, content_type: str = "text/plain; charset=utf-8", status: int = 200) -> None:
+            encoded = payload.encode("utf-8")
+            self.send_response(status)
+            self.send_header("Content-Type", content_type)
+            self.send_header("Content-Length", str(len(encoded)))
+            self.end_headers()
+            self.wfile.write(encoded)
+
         def do_GET(self) -> None:  # noqa: N802
             if self.path == "/health":
                 payload = {"status": "ok", "service": "cytool-ai"}
@@ -79,6 +87,19 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     payload = {"configured": True, "base_url": settings.base_url, "model": settings.model, "api_key_env": settings.api_key_env, "key_present": bool(os.environ.get(settings.api_key_env))}
                 except RuntimeError:
                     payload = {"configured": False}
+            elif self.path.startswith("/api/findings/") and self.path.endswith("/report"):
+                finding_id = unquote(self.path[len("/api/findings/"):-len("/report")]).rstrip("/")
+                finding = next((item for item in list_all(workspace) if item["id"] == finding_id), None)
+                if finding is None:
+                    self.send_json({"error": "finding not found"}, 404)
+                    return
+                report = Path(finding["report"]).resolve()
+                report_root = (workspace / "findings").resolve()
+                if report.parent != report_root or not report.is_file():
+                    self.send_json({"error": "report is unavailable"}, 404)
+                    return
+                self.send_text(report.read_text(encoding="utf-8", errors="replace"), "text/markdown; charset=utf-8")
+                return
             else:
                 self.send_error(404, "not found")
                 return
