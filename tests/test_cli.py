@@ -10,7 +10,7 @@ from cytool_ai.approval import ApprovalMode
 from cytool_ai.terminal import execute, redact
 from cytool_ai.toolpacks import fetch, register
 from cytool_ai.investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_input_surface
-from cytool_ai.exports import write_sarif, write_stix
+from cytool_ai.exports import sarif_payload, stix_payload, write_sarif, write_stix
 from cytool_ai.findings import add, list_all
 from cytool_ai.iocs import extract
 from cytool_ai.artifacts import inspect_upload, store_upload
@@ -216,3 +216,10 @@ def test_findings_keep_report_references(tmp_path):
     report.write_text("# Case report")
     add(workspace, "Report", report)
     assert workspace_findings(workspace)[0]["report"] == str(report)
+
+
+def test_export_payloads_support_dashboard_downloads(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    assert sarif_payload(workspace)["version"] == "2.1.0"
+    assert stix_payload(workspace)["type"] == "bundle"

@@ -20,6 +20,7 @@ from .reports import write_report
 from .iocs import extract as extract_iocs
 from .integrations import discover
 from .retools import inspect as external_re_inspect
+from .exports import sarif_payload, stix_payload
 from .logs import correlate
 from .workspaces import open_workspace
 
@@ -87,6 +88,24 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     payload = {"configured": True, "base_url": settings.base_url, "model": settings.model, "api_key_env": settings.api_key_env, "key_present": bool(os.environ.get(settings.api_key_env))}
                 except RuntimeError:
                     payload = {"configured": False}
+            elif self.path == "/api/export/sarif":
+                encoded = json.dumps(sarif_payload(workspace), indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/sarif+json")
+                self.send_header("Content-Disposition", 'attachment; filename="cytool-findings.sarif"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
+            elif self.path == "/api/export/stix":
+                encoded = json.dumps(stix_payload(workspace), indent=2).encode("utf-8")
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json")
+                self.send_header("Content-Disposition", 'attachment; filename="cytool-indicators.stix.json"')
+                self.send_header("Content-Length", str(len(encoded)))
+                self.end_headers()
+                self.wfile.write(encoded)
+                return
             elif self.path.startswith("/api/findings/") and self.path.endswith("/report"):
                 finding_id = unquote(self.path[len("/api/findings/"):-len("/report")]).rstrip("/")
                 finding = next((item for item in list_all(workspace) if item["id"] == finding_id), None)

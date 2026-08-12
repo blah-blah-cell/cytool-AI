@@ -14,7 +14,7 @@ from .iocs import list_all as list_iocs
 LEVELS = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
 
 
-def write_sarif(workspace: Path, destination: Path) -> Path:
+def sarif_payload(workspace: Path) -> dict[str, object]:
     findings = list_all(workspace)
     rules = []
     results = []
@@ -31,17 +31,25 @@ def write_sarif(workspace: Path, destination: Path) -> Path:
             "locations": [{"physicalLocation": {"artifactLocation": {"uri": finding["report"]}}}],
             "properties": {"cytoolFindingId": finding["id"], "createdAt": finding["created_at"]},
         })
-    payload = {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "cytool-AI", "rules": rules}}, "results": results}]}
+    return {"version": "2.1.0", "$schema": "https://json.schemastore.org/sarif-2.1.0.json", "runs": [{"tool": {"driver": {"name": "cytool-AI", "rules": rules}}, "results": results}]}
+
+
+def write_sarif(workspace: Path, destination: Path) -> Path:
+    payload = sarif_payload(workspace)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return destination
 
 
-def write_stix(workspace: Path, destination: Path) -> Path:
+def stix_payload(workspace: Path) -> dict[str, object]:
     objects = []
     for ioc in list_iocs(workspace):
         objects.append({"type": "indicator", "spec_version": "2.1", "id": f"indicator--{uuid.uuid4()}", "created": ioc["first_seen"], "modified": ioc["first_seen"], "name": f"cytool-AI {ioc['kind']}", "pattern_type": "stix", "valid_from": ioc["first_seen"], "pattern": f"[{ioc['kind']} = '{ioc['value'].replace("'", "\\'")}']", "external_references": [{"source_name": "cytool-ai", "description": ioc["source"]}]})
-    payload = {"type": "bundle", "id": f"bundle--{uuid.uuid4()}", "objects": objects, "created": datetime.now(UTC).isoformat()}
+    return {"type": "bundle", "id": f"bundle--{uuid.uuid4()}", "objects": objects, "created": datetime.now(UTC).isoformat()}
+
+
+def write_stix(workspace: Path, destination: Path) -> Path:
+    payload = stix_payload(workspace)
     destination.parent.mkdir(parents=True, exist_ok=True)
     destination.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
     return destination
