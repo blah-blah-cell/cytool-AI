@@ -18,6 +18,7 @@ from .findings import list_all
 from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .integrations import discover
 from .runners import list_profiles
+from .operations import backup, doctor
 from .exports import write_sarif, write_stix
 from .retools import inspect as external_re_inspect
 from .iocs import extract as extract_iocs
@@ -194,6 +195,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     audit = commands.add_parser("audit", help="show workspace audit events")
     audit.add_argument("--workspace", required=True)
+
+    doctor_command = commands.add_parser("doctor", help="check cytool-AI provider, workspace, and local integration readiness")
+    doctor_command.add_argument("--workspace")
+    backup_command = commands.add_parser("backup", help="create a portable ZIP backup of a workspace")
+    backup_command.add_argument("--workspace", required=True)
+    backup_command.add_argument("--output", required=True)
     return parser
 
 
@@ -399,6 +406,16 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "audit":
             events = read(open_workspace(args.workspace))
             print(json.dumps(events, indent=2))
+            return 0
+        if args.command == "doctor":
+            workspace = open_workspace(args.workspace) if args.workspace else None
+            print(json.dumps(doctor(workspace), indent=2))
+            return 0
+        if args.command == "backup":
+            workspace = open_workspace(args.workspace)
+            output = backup(workspace, Path(args.output))
+            record(workspace, "workspace.backed_up", output=str(output))
+            print(output)
             return 0
     except (FileExistsError, FileNotFoundError, KeyError, PermissionError, RuntimeError, ValueError) as exc:
         print(f"error: {exc}")

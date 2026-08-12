@@ -18,6 +18,7 @@ from cytool_ai.policy import Scope, save, validate_target
 from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
+from cytool_ai.operations import backup, doctor
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -184,3 +185,13 @@ def test_uploaded_artifact_can_feed_ioc_analysis(tmp_path):
 def test_re_integration_registry_is_machine_readable():
     values = discover()
     assert {item["command"] for item in values} >= {"readelf", "objdump", "rabin2"}
+
+
+def test_workspace_backup_and_doctor(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    (workspace / "workspace.json").write_text("{}")
+    (workspace / "evidence.txt").write_text("case evidence")
+    output = backup(workspace, tmp_path / "backup.zip")
+    assert output.is_file()
+    assert doctor(workspace)["workspace"]["path"] == str(workspace)

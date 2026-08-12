@@ -164,6 +164,23 @@ and remote runner profiles are descriptive in v0.1 and do not start anything.
 PYTHONPATH=src python3 -m pytest
 ```
 
+## Operations
+
+Run a readiness check to see the configured AI provider, installed workspace
+modules, and optional local DFIR/RE integration availability:
+
+```bash
+cytool doctor --workspace research-lab
+```
+
+Create a portable, complete ZIP backup of the workspace (including evidence,
+reports, audit trail, and local indexes) before moving it to another approved
+machine or retaining case records:
+
+```bash
+cytool backup --workspace research-lab --output ./research-lab-backup.zip
+```
+
 The project is MIT licensed, except for the explicitly attributed
 Apache-2.0-derived approval utility documented in
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
