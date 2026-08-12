@@ -19,6 +19,7 @@ from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.integrations import discover
 from cytool_ai.operations import backup, doctor
+from cytool_ai.ai import configure
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -196,3 +197,12 @@ def test_workspace_backup_and_doctor(tmp_path):
     output = backup(workspace, tmp_path / "backup.zip")
     assert output.is_file()
     assert doctor(workspace)["workspace"]["path"] == str(workspace)
+
+
+def test_provider_configuration_stores_no_api_key(monkeypatch, tmp_path):
+    monkeypatch.setenv("CYTOOL_HOME", str(tmp_path))
+    settings = configure("https://provider.example/v1", "model-a", "TEST_PROVIDER_KEY")
+    saved = (tmp_path / "provider.json").read_text()
+    assert settings.model == "model-a"
+    assert "TEST_PROVIDER_KEY" in saved
+    assert "secret" not in saved.lower()

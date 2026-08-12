@@ -8,7 +8,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import unquote
 
-from .ai import build_context, chat, configured, response_text
+from .ai import build_context, chat, configure, configured, response_text
 from .artifacts import MAX_UPLOAD_BYTES, inspect_upload, store_upload
 from .audit import read, record
 from .findings import add, list_all
@@ -73,6 +73,12 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 payload = {"artifacts": [{"name": path.name, "size_bytes": path.stat().st_size} for path in sorted((workspace / "artifacts").iterdir()) if path.is_file()]}
             elif self.path == "/api/integrations":
                 payload = {"integrations": discover()}
+            elif self.path == "/api/config/provider":
+                try:
+                    settings = configured()
+                    payload = {"configured": True, "base_url": settings.base_url, "model": settings.model, "api_key_env": settings.api_key_env, "key_present": bool(os.environ.get(settings.api_key_env))}
+                except RuntimeError:
+                    payload = {"configured": False}
             else:
                 self.send_error(404, "not found")
                 return
@@ -96,6 +102,15 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     save(workspace, scope)
                     record(workspace, "scope.declared_from_dashboard", engagement=scope.engagement, domains=domains)
                     self.send_json({"engagement": scope.engagement, "domains": domains}, 201)
+                except (ValueError, OSError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/config/provider":
+                try:
+                    payload = request_json()
+                    settings = configure(str(payload.get("base_url", "")), str(payload.get("model", "")), str(payload.get("api_key_env", "OPENAI_API_KEY")))
+                    record(workspace, "provider.configured_from_dashboard", base_url=settings.base_url, model=settings.model, api_key_env=settings.api_key_env)
+                    self.send_json({"configured": True, "base_url": settings.base_url, "model": settings.model, "api_key_env": settings.api_key_env, "key_present": bool(os.environ.get(settings.api_key_env))}, 201)
                 except (ValueError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
