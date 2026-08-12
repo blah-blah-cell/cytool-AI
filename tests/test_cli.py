@@ -17,6 +17,7 @@ from cytool_ai.artifacts import inspect_upload, store_upload
 from cytool_ai.policy import Scope, save, validate_target
 from cytool_ai.ai import build_context
 from cytool_ai.iocs import extract as extract_iocs
+from cytool_ai.integrations import discover
 
 
 def test_workspace_module_and_audit_flow(monkeypatch, tmp_path, capsys):
@@ -178,3 +179,8 @@ def test_uploaded_artifact_can_feed_ioc_analysis(tmp_path):
     stored = store_upload(workspace, "network.txt", b"https://indicator.example/path 203.0.113.15")
     values = extract_iocs(workspace, stored)
     assert {item["kind"] for item in values} >= {"url", "ipv4-addr"}
+
+
+def test_re_integration_registry_is_machine_readable():
+    values = discover()
+    assert {item["command"] for item in values} >= {"readelf", "objdump", "rabin2"}

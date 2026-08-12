@@ -18,6 +18,8 @@ from .policy import Scope, save, validate_target
 from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .reports import write_report
 from .iocs import extract as extract_iocs
+from .integrations import discover
+from .retools import inspect as external_re_inspect
 from .logs import correlate
 from .workspaces import open_workspace
 
@@ -69,6 +71,8 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 payload = {"iocs": list_iocs(workspace)}
             elif self.path == "/api/artifacts":
                 payload = {"artifacts": [{"name": path.name, "size_bytes": path.stat().st_size} for path in sorted((workspace / "artifacts").iterdir()) if path.is_file()]}
+            elif self.path == "/api/integrations":
+                payload = {"integrations": discover()}
             else:
                 self.send_error(404, "not found")
                 return
@@ -174,6 +178,24 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                     record(workspace, "offline.workflow_from_dashboard", workflow=workflow, artifact=name)
                     self.send_json({"evidence": evidence, "report": str(report)}, 201)
                 except (ValueError, PermissionError, OSError, json.JSONDecodeError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
+            if self.path == "/api/re/external":
+                try:
+                    payload = request_json()
+                    if "binary-fingerprint" not in installed(workspace):
+                        raise PermissionError("install the binary-fingerprint module before collecting RE evidence")
+                    tool = str(payload.get("tool", ""))
+                    name = Path(str(payload.get("artifact", ""))).name
+                    path = (workspace / "artifacts" / name).resolve()
+                    if path.parent != (workspace / "artifacts").resolve() or not path.is_file():
+                        raise ValueError("select an uploaded artifact")
+                    evidence = external_re_inspect(path, tool)
+                    report = write_report(workspace, f"External RE evidence ({tool})", evidence)
+                    add(workspace, f"External RE evidence ({tool})", report)
+                    record(workspace, "re.external_from_dashboard", tool=tool, artifact=name, returncode=evidence["returncode"])
+                    self.send_json({"evidence": evidence, "report": str(report)}, 201)
+                except (ValueError, PermissionError, FileNotFoundError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
             if self.path == "/api/logs/correlate":
