@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 VOLATILITY_PLUGINS = {"windows.info", "windows.pslist", "windows.netscan", "linux.pslist", "linux.netstat"}
 
 

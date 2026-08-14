@@ -16,7 +16,6 @@ from pathlib import Path
 
 from .approval import ApprovalMode
 
-
 SECRET_PATTERNS = (
     re.compile(r"(?i)(api[_-]?key|token|secret|password)\s*[:=]\s*[^\s,;]+"),
     re.compile(r"\bsk-[A-Za-z0-9_-]{12,}\b"),
@@ -26,7 +25,6 @@ SAFE_COMMANDS = {
     "pwd": {()},
     "ls": {(), ("-la",), ("-l",), ("-a",)},
     "git": {("status",), ("status", "--short"), ("diff",), ("diff", "--stat"), ("log", "-1", "--oneline")},
-    "pytest": {(), ("-q",)},
     "rg": {( "--files",)},
 }
 
@@ -60,10 +58,21 @@ def execute(command: str, mode: ApprovalMode, cwd: Path) -> CommandResult:
     argv = parse_safe(command)
     if mode is not ApprovalMode.APPROVED:
         return CommandResult(argv, str(mode), False, None, "", "execution requires --mode approved")
+    executed_argv = argv
+    if argv[0] == "git":
+        executed_argv = ("git", "-c", "core.fsmonitor=false", "-c", "diff.external=", *argv[1:])
     completed = subprocess.run(
-        argv,
+        executed_argv,
         cwd=cwd,
-        env={"PATH": os.environ.get("PATH", ""), "LANG": "C.UTF-8"},
+        env={
+            "PATH": os.environ.get("PATH", ""),
+            "LANG": "C.UTF-8",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_CONFIG_GLOBAL": os.devnull,
+            "GIT_EXTERNAL_DIFF": "",
+            "GIT_OPTIONAL_LOCKS": "0",
+            "GIT_PAGER": "cat",
+        },
         text=True,
         capture_output=True,
         timeout=20,

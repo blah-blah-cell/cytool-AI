@@ -5,8 +5,8 @@ cytool-AI is a Linux-first, local-first cybersecurity automation workspace for
 collection, case management, a local dashboard, optional AI assistance, and
 integrity-verified tool packs without silently executing downloaded code.
 
-> Status: v0.2 beta. The core control plane and initial evidence workflows are
-> implemented. See [What works today](#what-works-today) for the exact scope.
+> Status: v1.0. The local-first defensive workflows listed below are implemented
+> and exercised by automated CLI and dashboard API tests.
 
 ## Why cytool-AI
 
@@ -26,13 +26,13 @@ integrity-verified tool packs without silently executing downloaded code.
 | Area | Current capability | Boundary |
 | --- | --- | --- |
 | Case management | Workspaces, reports, findings, audit history, SARIF export | Local files only |
-| Artifact triage | Hashes, strings, format hints | Supplied files are never executed |
+| Artifact triage | Streaming full-file hashes, bounded string sampling, format hints | Supplied files are never executed |
 | RE | Native ELF/PE metadata and optional `readelf`/`objdump`/`rabin2` evidence | Read-only parsers |
 | Memory | Offline URL, IPv4, and domain extraction | Capture is read, never executed |
 | DFIR tools | Optional local YARA and Volatility adapters | Explicit authorization and user-supplied rules/images |
-| Logs | Timestamp correlation across text logs | Offline only |
-| IOCs | Local extraction, index, and STIX 2.1 export | No automatic external enrichment |
-| Cloud | Baseline posture flags in supplied JSON exports | Offline only |
+| Logs | Streaming timestamp correlation across up to 128 MiB of text logs | Offline only |
+| IOCs | Local extraction (first 64 MiB), full-file hash, index, and STIX 2.1 export | No automatic external enrichment |
+| Cloud | Baseline posture flags in supplied JSON exports up to 32 MiB | Offline only |
 | Web | Response-header review and HTML form/script inventory | One in-scope request; no crawling or payload injection |
 | AI | `ask`, `teach`, and review-only `fix` workflows | Explicit provider configuration and opt-in terminal context |
 | Terminal | `plan`, `confirm`, and `approved` modes | Tiny read-only argv allowlist; no shell/network/privilege escalation |
@@ -168,8 +168,9 @@ cytool toolpacks fetch my-toolpack --workspace research-lab
 Use cytool-AI only against systems, networks, and data you own or are
 explicitly authorized to assess. Current web workflows avoid payload injection;
 the terminal feature does not use a shell and rejects redirects, pipes,
-substitutions, downloads, network commands, and privilege escalation. Container
-and remote runner profiles are descriptive in v0.1 and do not start anything.
+substitutions, downloads, network commands, and privilege escalation. cytool-AI
+does not advertise remote agents or container orchestration that it does not
+implement.
 
 ## Development
 

@@ -17,10 +17,9 @@ def record(workspace: Path, event: str, **details: Any) -> dict[str, Any]:
         "details": details,
     }
     audit_file = workspace / "audit.jsonl"
-    with workspace_lock(workspace):
-        with audit_file.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(payload, sort_keys=True) + "\n")
-            handle.flush()
+    with workspace_lock(workspace), audit_file.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(payload, sort_keys=True) + "\n")
+        handle.flush()
     return payload
 
 

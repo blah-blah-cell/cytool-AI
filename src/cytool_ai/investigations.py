@@ -17,17 +17,23 @@ from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
 
-
 ELF_MACHINES = {3: "x86", 40: "ARM", 62: "x86-64", 183: "AArch64", 243: "RISC-V"}
 PE_MACHINES = {0x014C: "x86", 0x8664: "x86-64", 0xAA64: "AArch64"}
 URL_PATTERN = re.compile(rb"https?://[^\s\"'<>]{6,512}")
 IP_PATTERN = re.compile(rb"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)")
 DOMAIN_PATTERN = re.compile(rb"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}\b")
+MAX_BINARY_METADATA_BYTES = 64 * 1024 * 1024
+MAX_CLOUD_EXPORT_BYTES = 32 * 1024 * 1024
 
 
 def binary_metadata(path: Path) -> dict[str, Any]:
-    data = path.read_bytes()
-    result: dict[str, Any] = {"path": str(path.resolve()), "format": "unknown", "details": {}}
+    if not path.is_file():
+        raise FileNotFoundError(f"binary not found: {path}")
+    with path.open("rb") as source:
+        data = source.read(MAX_BINARY_METADATA_BYTES + 1)
+    truncated = len(data) > MAX_BINARY_METADATA_BYTES
+    data = data[:MAX_BINARY_METADATA_BYTES]
+    result: dict[str, Any] = {"path": str(path.resolve()), "format": "unknown", "details": {}, "bytes_examined": len(data), "input_truncated": truncated}
     if data.startswith(b"\x7fELF") and len(data) >= 20:
         endian = "little" if data[5] == 1 else "big" if data[5] == 2 else "unknown"
         prefix = "<" if endian == "little" else ">"
@@ -97,10 +103,10 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def web_evidence(url: str) -> dict[str, Any]:
     """Fetch response headers only; redirects remain unvisited for scope safety."""
-    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/0.1 (authorized evidence review)"}, method="HEAD")
+    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/1.0 (authorized evidence review)"}, method="HEAD")
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(request, timeout=15) as response:  # noqa: S310 - caller validates target scope
+        with opener.open(request, timeout=15) as response:
             headers = dict(response.headers.items())
             status = response.status
     except urllib.error.HTTPError as exc:
@@ -142,10 +148,10 @@ class _SurfaceParser(HTMLParser):
 
 def web_input_surface(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
     """Retrieve one in-scope page and inventory its declared HTML inputs only."""
-    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/0.1 (authorized input inventory)"}, method="GET")
+    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/1.0 (authorized input inventory)"}, method="GET")
     opener = urllib.request.build_opener(_NoRedirect)
     try:
-        with opener.open(request, timeout=15) as response:  # noqa: S310 - caller validates target scope
+        with opener.open(request, timeout=15) as response:
             body = response.read(max_bytes + 1)
             status, content_type = response.status, response.headers.get_content_type()
     except urllib.error.HTTPError as exc:
@@ -162,22 +168,30 @@ def web_input_surface(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> dict[str
 
 
 def cloud_export_review(path: Path, *, limit: int = 100) -> dict[str, Any]:
-    data = json.loads(path.read_text(encoding="utf-8"))
+    if not path.is_file():
+        raise FileNotFoundError(f"cloud export not found: {path}")
+    if path.stat().st_size > MAX_CLOUD_EXPORT_BYTES:
+        raise ValueError("cloud export exceeds the 32 MiB analysis limit")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except RecursionError as exc:
+        raise ValueError("cloud export is nested too deeply") from exc
     findings: list[dict[str, object]] = []
     risky_pairs = {"public": True, "publicly_accessible": True, "encryption": False, "mfa_enabled": False, "logging": False}
 
-    def walk(value: object, location: str) -> None:
-        if len(findings) >= limit:
-            return
+    pending: list[tuple[object, str]] = [(data, "")]
+    while pending and len(findings) < limit:
+        value, location = pending.pop()
         if isinstance(value, dict):
-            for key, child in value.items():
+            for key, child in reversed(list(value.items())):
                 normalized = key.lower().replace("-", "_")
                 if normalized in risky_pairs and child == risky_pairs[normalized]:
                     findings.append({"path": f"{location}.{key}".lstrip("."), "value": child, "reason": f"{key} is set to {child}"})
-                walk(child, f"{location}.{key}".lstrip("."))
+                    if len(findings) >= limit:
+                        break
+                pending.append((child, f"{location}.{key}".lstrip(".")))
         elif isinstance(value, list):
-            for index, child in enumerate(value):
-                walk(child, f"{location}[{index}]")
+            for index in range(len(value) - 1, -1, -1):
+                pending.append((value[index], f"{location}[{index}]"))
 
-    walk(data, "")
-    return {"path": str(path.resolve()), "finding_count": len(findings), "findings": findings, "truncated": len(findings) >= limit}
+    return {"path": str(path.resolve()), "finding_count": len(findings), "findings": findings, "truncated": bool(pending)}

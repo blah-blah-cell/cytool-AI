@@ -10,7 +10,6 @@ from pathlib import Path
 from .findings import list_all
 from .iocs import list_all as list_iocs
 
-
 LEVELS = {"info": "note", "low": "note", "medium": "warning", "high": "error", "critical": "error"}
 
 
@@ -44,7 +43,8 @@ def write_sarif(workspace: Path, destination: Path) -> Path:
 def stix_payload(workspace: Path) -> dict[str, object]:
     objects = []
     for ioc in list_iocs(workspace):
-        objects.append({"type": "indicator", "spec_version": "2.1", "id": f"indicator--{uuid.uuid4()}", "created": ioc["first_seen"], "modified": ioc["first_seen"], "name": f"cytool-AI {ioc['kind']}", "pattern_type": "stix", "valid_from": ioc["first_seen"], "pattern": f"[{ioc['kind']} = '{ioc['value'].replace("'", "\\'")}']", "external_references": [{"source_name": "cytool-ai", "description": ioc["source"]}]})
+        escaped_value = ioc["value"].replace("'", "\\'")
+        objects.append({"type": "indicator", "spec_version": "2.1", "id": f"indicator--{uuid.uuid4()}", "created": ioc["first_seen"], "modified": ioc["first_seen"], "name": f"cytool-AI {ioc['kind']}", "pattern_type": "stix", "valid_from": ioc["first_seen"], "pattern": f"[{ioc['kind']} = '{escaped_value}']", "external_references": [{"source_name": "cytool-ai", "description": ioc["source"]}]})
     return {"type": "bundle", "id": f"bundle--{uuid.uuid4()}", "objects": objects, "created": datetime.now(UTC).isoformat()}
 
 

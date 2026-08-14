@@ -2,38 +2,74 @@
 
 from __future__ import annotations
 
+import hmac
 import json
 import os
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from urllib.parse import unquote
+from urllib.parse import unquote, urlsplit
 
 from .ai import build_context, chat, configure, configured, response_text
 from .artifacts import MAX_UPLOAD_BYTES, inspect_upload, store_upload
 from .audit import read, record
+from .exports import sarif_payload, stix_payload
 from .findings import add, list_all
+from .integrations import discover
+from .investigations import (
+    binary_metadata,
+    cloud_export_review,
+    memory_artifact_scan,
+    web_evidence,
+    web_input_surface,
+)
+from .iocs import extract as extract_iocs
 from .iocs import list_all as list_iocs
+from .logs import correlate
 from .modules import install, installed, registry
 from .policy import Scope, save, validate_target
-from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .reports import write_report
-from .iocs import extract as extract_iocs
-from .integrations import discover
 from .retools import inspect as external_re_inspect
-from .exports import sarif_payload, stix_payload
-from .logs import correlate
 from .workspaces import open_workspace
-
 
 PAGE = (Path(__file__).with_name("web") / "dashboard.html").read_bytes()
 
 
-def serve(workspace_name: str, host: str, port: int) -> None:
+def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -> ThreadingHTTPServer:
+    """Create a localhost-only dashboard server without starting its loop."""
     if host not in {"127.0.0.1", "localhost", "::1"}:
         raise PermissionError("dashboard may only bind to localhost")
     workspace = open_workspace(workspace_name)
 
     class Handler(BaseHTTPRequestHandler):
+        def end_headers(self) -> None:
+            self.send_header("Cache-Control", "no-store")
+            self.send_header("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self' 'unsafe-inline'; connect-src 'self'; object-src 'none'; frame-ancestors 'none'; base-uri 'none'")
+            self.send_header("Referrer-Policy", "no-referrer")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("X-Frame-Options", "DENY")
+            super().end_headers()
+
+        def request_host_is_local(self) -> bool:
+            host = self.headers.get("Host", "")
+            name = host.rsplit(":", 1)[0].strip("[]").lower() if host else ""
+            return name in {"127.0.0.1", "localhost", "::1"}
+
+        def origin_is_trusted(self) -> bool:
+            origin = self.headers.get("Origin")
+            if not origin:
+                return True
+            try:
+                parsed = urlsplit(origin)
+                return parsed.scheme == "http" and parsed.hostname in {"127.0.0.1", "localhost", "::1"} and parsed.port == self.server.server_port
+            except ValueError:
+                return False
+
+        def reject_untrusted_request(self, *, mutation: bool = False) -> bool:
+            if not self.request_host_is_local() or (mutation and not self.origin_is_trusted()):
+                self.send_json({"error": "request must originate from this localhost dashboard"}, 403)
+                return True
+            return False
+
         def send_json(self, payload: object, status: int = 200) -> None:
             encoded = json.dumps(payload).encode("utf-8")
             self.send_response(status)
@@ -50,7 +86,9 @@ def serve(workspace_name: str, host: str, port: int) -> None:
             self.end_headers()
             self.wfile.write(encoded)
 
-        def do_GET(self) -> None:  # noqa: N802
+        def do_GET(self) -> None:
+            if self.reject_untrusted_request():
+                return
             if self.path == "/health":
                 payload = {"status": "ok", "service": "cytool-ai"}
             elif self.path == "/":
@@ -124,14 +162,17 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 return
             self.send_json(payload)
 
-        def do_POST(self) -> None:  # noqa: N802
+        def do_POST(self) -> None:
+            if self.reject_untrusted_request(mutation=True):
+                return
+
             def request_json() -> dict[str, object]:
                 length = int(self.headers.get("Content-Length", "0"))
                 if not 0 < length <= 64 * 1024:
                     raise ValueError("invalid request size")
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict):
-                    raise ValueError("request body must be an object")
+                    raise ValueError("request body must be an object")  # noqa: TRY004 - invalid JSON request value
                 return payload
 
             if self.path == "/api/scope":
@@ -316,14 +357,17 @@ def serve(workspace_name: str, host: str, port: int) -> None:
                 self.send_error(404, "not found")
                 return
             server_key = os.environ.get("CYTOOL_SERVER_KEY")
-            if not server_key or self.headers.get("Authorization") != f"Bearer {server_key}":
+            supplied = self.headers.get("Authorization", "")
+            if not server_key or not hmac.compare_digest(supplied, f"Bearer {server_key}"):
                 self.send_error(401, "set CYTOOL_SERVER_KEY and provide a bearer token")
                 return
             try:
                 length = int(self.headers.get("Content-Length", "0"))
+                if not 0 < length <= 1024 * 1024:
+                    raise ValueError("request must be between 1 byte and 1 MiB")
                 payload = json.loads(self.rfile.read(length))
-                if not isinstance(payload.get("messages"), list):
-                    raise ValueError("messages must be a list")
+                if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
+                    raise ValueError("messages must be a list")  # noqa: TRY004 - invalid JSON request value
                 response = chat(payload["messages"], context={"workspace": workspace.name})
                 encoded = json.dumps(response).encode("utf-8")
                 self.send_response(200)
@@ -337,5 +381,14 @@ def serve(workspace_name: str, host: str, port: int) -> None:
         def log_message(self, _format: str, *_args: object) -> None:
             return
 
-    print(f"cytool-AI dashboard API: http://{host}:{port}")
-    ThreadingHTTPServer((host, port), Handler).serve_forever()
+    return ThreadingHTTPServer((host, port), Handler)
+
+
+def serve(workspace_name: str, host: str, port: int) -> None:
+    server = create_server(workspace_name, host, port)
+    bound_host, bound_port = server.server_address[:2]
+    print(f"cytool-AI dashboard API: http://{bound_host}:{bound_port}")
+    try:
+        server.serve_forever()
+    finally:
+        server.server_close()

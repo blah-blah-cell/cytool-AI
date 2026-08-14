@@ -5,7 +5,6 @@ from __future__ import annotations
 import shutil
 from typing import Any
 
-
 TOOLS = {
     "readelf": "ELF metadata parser",
     "objdump": "binary inspection utility",

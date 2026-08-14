@@ -7,7 +7,6 @@ import subprocess
 from pathlib import Path
 from typing import Any
 
-
 COMMANDS = {
     "readelf": ["-h", "-S", "--wide"],
     "objdump": ["-x"],

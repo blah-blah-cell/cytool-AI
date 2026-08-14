@@ -6,10 +6,9 @@ import os
 import tempfile
 import threading
 from collections import defaultdict
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Iterator
-
 
 _locks: defaultdict[str, threading.RLock] = defaultdict(threading.RLock)
 

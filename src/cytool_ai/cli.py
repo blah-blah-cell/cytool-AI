@@ -9,29 +9,34 @@ from pathlib import Path
 
 from . import __version__
 from .ai import build_context, chat, configure, response_text
+from .analysis import inspect_file
 from .approval import ApprovalMode, description
 from .audit import read, record
-from .analysis import inspect_file
 from .dashboard import serve
+from .dfirtools import volatility, yara_scan
+from .exports import write_sarif, write_stix
 from .findings import add as add_finding
 from .findings import list_all
-from .investigations import binary_metadata, cloud_export_review, memory_artifact_scan, web_evidence, web_input_surface
 from .integrations import discover
-from .runners import list_profiles
-from .operations import backup, doctor
-from .exports import write_sarif, write_stix
-from .retools import inspect as external_re_inspect
+from .investigations import (
+    binary_metadata,
+    cloud_export_review,
+    memory_artifact_scan,
+    web_evidence,
+    web_input_surface,
+)
 from .iocs import extract as extract_iocs
 from .iocs import list_all as list_iocs
-from .dfirtools import volatility, yara_scan
+from .logs import correlate
 from .modules import install, installed, registry
+from .operations import backup, doctor
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
+from .retools import inspect as external_re_inspect
 from .terminal import execute
 from .toolpacks import fetch as fetch_toolpack
 from .toolpacks import register as register_toolpack
 from .toolpacks import registered as registered_toolpacks
-from .logs import correlate
 from .workspaces import create, open_workspace
 
 
@@ -60,12 +65,6 @@ def build_parser() -> argparse.ArgumentParser:
     scope_check = scope_commands.add_parser("check", help="confirm a target falls inside declared scope")
     scope_check.add_argument("target")
     scope_check.add_argument("--workspace", required=True)
-
-    run = commands.add_parser("run", help="record an authorized module execution request")
-    run.add_argument("module_id")
-    run.add_argument("--workspace", required=True)
-    run.add_argument("--authorized", action="store_true", help="confirm you are authorized to use this module")
-    run.add_argument("--target", help="optional target; validated against declared scope")
 
     inspect = commands.add_parser("inspect", help="analyze supplied evidence without executing it")
     inspect.add_argument("path")
@@ -177,9 +176,6 @@ def build_parser() -> argparse.ArgumentParser:
 
     integrations = commands.add_parser("integrations", help="discover optional locally installed analysis tools")
     integrations.add_argument("action", choices=["list"], nargs="?", default="list")
-    runners = commands.add_parser("runners", help="show execution-isolation profiles")
-    runners.add_argument("action", choices=["list"], nargs="?", default="list")
-
     ai = commands.add_parser("ai", help="OpenAI-compatible assistant workflows")
     ai_commands = ai.add_subparsers(dest="ai_command", required=True)
     ai_configure = ai_commands.add_parser("configure", help="store an OpenAI-compatible provider configuration")
@@ -232,17 +228,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.command == "scope":
             host = validate_target(open_workspace(args.workspace), args.target)
             print(f"In scope: {host}")
-            return 0
-        if args.command == "run":
-            workspace = open_workspace(args.workspace)
-            module = installed(workspace).get(args.module_id)
-            if module is None:
-                raise RuntimeError(f"module is not installed: {args.module_id}")
-            if module["requires_authorization"] and not args.authorized:
-                raise PermissionError("this module requires --authorized confirmation")
-            target = validate_target(workspace, args.target) if args.target else None
-            record(workspace, "module.execution_requested", module_id=args.module_id, authorized=args.authorized, target=target)
-            print(f"Recorded execution request for {args.module_id}. No active operation was performed.")
             return 0
         if args.command == "inspect":
             workspace = open_workspace(args.workspace)
@@ -358,9 +343,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 0
         if args.command == "integrations":
             print(json.dumps(discover(), indent=2))
-            return 0
-        if args.command == "runners":
-            print(json.dumps(list_profiles(), indent=2))
             return 0
         if args.command == "export":
             workspace = open_workspace(args.workspace)

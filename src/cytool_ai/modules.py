@@ -1,7 +1,7 @@
-"""Module registry and installation metadata.
+"""Registry for built-in, implemented workflow modules.
 
-This layer intentionally installs metadata, not unreviewed executable payloads.
-Future remote module sources must be integrity checked before code is accepted.
+Installation enables a bundled workflow; external archives use the separate,
+integrity-verified tool-pack mechanism and are never silently executed.
 """
 
 from __future__ import annotations
@@ -20,7 +20,7 @@ class Module:
     summary: str
     category: str
     requires_authorization: bool
-    version: str = "0.1.0"
+    version: str = "1.0.0"
 
 
 BUILTIN_MODULES = (

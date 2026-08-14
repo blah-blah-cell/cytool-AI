@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import platform
 import sys
 import zipfile
@@ -39,6 +38,6 @@ def backup(workspace: Path, output: Path) -> Path:
     output.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in sorted(workspace.rglob("*")):
-            if path.is_file():
+            if path.is_file() and not path.is_symlink():
                 archive.write(path, path.relative_to(workspace))
     return output
