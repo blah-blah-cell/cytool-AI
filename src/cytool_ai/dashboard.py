@@ -16,9 +16,10 @@ from .exports import sarif_payload, stix_payload
 from .findings import add, list_all
 from .integrations import discover
 from .investigations import (
-    binary_metadata,
+    binary_security_profile,
     cloud_export_review,
     memory_artifact_scan,
+    tls_evidence,
     web_evidence,
     web_input_surface,
 )
@@ -26,6 +27,7 @@ from .iocs import extract as extract_iocs
 from .iocs import list_all as list_iocs
 from .logs import correlate
 from .modules import install, installed, registry
+from .pipelines import list_runs, run_pipeline
 from .policy import Scope, save, validate_target
 from .reports import write_report
 from .retools import inspect as external_re_inspect
@@ -120,6 +122,8 @@ def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -
                 payload = {"artifacts": [{"name": path.name, "size_bytes": path.stat().st_size} for path in sorted((workspace / "artifacts").iterdir()) if path.is_file()]}
             elif self.path == "/api/integrations":
                 payload = {"integrations": discover()}
+            elif self.path == "/api/pipelines":
+                payload = {"runs": list_runs(workspace)}
             elif self.path == "/api/config/provider":
                 try:
                     settings = configured()
@@ -203,15 +207,20 @@ def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -
                     if payload.get("authorized") is not True:
                         raise PermissionError("confirm authorization before requesting a target")
                     mode = str(payload.get("mode", "headers"))
-                    if mode not in {"headers", "forms"}:
-                        raise ValueError("mode must be headers or forms")
+                    if mode not in {"headers", "forms", "tls"}:
+                        raise ValueError("mode must be headers, forms, or tls")
                     url = str(payload.get("url", ""))
                     validate_target(workspace, url)
-                    evidence = web_evidence(url) if mode == "headers" else web_input_surface(url)
-                    title = "Web response-header review" if mode == "headers" else "Web input-surface inventory"
+                    if mode == "headers":
+                        evidence, title = web_evidence(url), "Web response-header review"
+                    elif mode == "forms":
+                        evidence, title = web_input_surface(url), "Web input-surface inventory"
+                    else:
+                        evidence, title = tls_evidence(url), "Web TLS evidence"
                     report = write_report(workspace, title, evidence)
-                    add(workspace, title, report, "low" if mode == "headers" and evidence.get("missing_recommended_headers") else "info")
-                    record(workspace, "web.reviewed_from_dashboard", mode=mode, url=url, status=evidence["status"])
+                    severity = "low" if (mode == "headers" and evidence.get("missing_recommended_headers")) or (mode == "tls" and evidence.get("days_remaining", 999) < 30) else "info"
+                    add(workspace, title, report, severity)
+                    record(workspace, "web.reviewed_from_dashboard", mode=mode, url=url, status=evidence.get("status"), protocol=evidence.get("protocol"))
                     self.send_json({"evidence": evidence, "report": str(report)}, 201)
                 except (ValueError, PermissionError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
@@ -238,6 +247,24 @@ def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -
                 except (ValueError, PermissionError, RuntimeError, OSError) as exc:
                     self.send_json({"error": str(exc)}, 400)
                 return
+            if self.path == "/api/pipelines/run":
+                try:
+                    payload = request_json()
+                    name = str(payload.get("name", "Dashboard artifact triage"))
+                    artifact = Path(str(payload.get("artifact", ""))).name
+                    workflows = payload.get("workflows", [])
+                    if not isinstance(workflows, list) or not 1 <= len(workflows) <= 5 or not all(workflow in {"inspect", "binary", "memory", "cloud", "ioc"} for workflow in workflows):
+                        raise ValueError("choose between one and five supported pipeline workflows")
+                    manifest = {
+                        "name": name,
+                        "fail_fast": payload.get("fail_fast", True) is not False,
+                        "steps": [{"id": f"{workflow}-{index}", "workflow": workflow, "path": artifact} for index, workflow in enumerate(workflows, start=1)],
+                    }
+                    result = run_pipeline(workspace, manifest, artifact_root=workspace / "artifacts", authorized=payload.get("authorized") is True)
+                    self.send_json(result, 201)
+                except (ValueError, PermissionError, FileNotFoundError, RuntimeError, OSError, json.JSONDecodeError) as exc:
+                    self.send_json({"error": str(exc)}, 400)
+                return
             if self.path == "/api/offline/analyze":
                 try:
                     payload = request_json()
@@ -260,7 +287,7 @@ def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -
                     if path.parent != (workspace / "artifacts").resolve() or not path.is_file():
                         raise ValueError("select an uploaded artifact")
                     if workflow == "binary":
-                        evidence = binary_metadata(path)
+                        evidence = binary_security_profile(path)
                     elif workflow == "memory":
                         evidence = memory_artifact_scan(path)
                     elif workflow == "cloud":
@@ -368,7 +395,10 @@ def create_server(workspace_name: str, host: str = "127.0.0.1", port: int = 0) -
                 payload = json.loads(self.rfile.read(length))
                 if not isinstance(payload, dict) or not isinstance(payload.get("messages"), list):
                     raise ValueError("messages must be a list")  # noqa: TRY004 - invalid JSON request value
-                response = chat(payload["messages"], context={"workspace": workspace.name})
+                response = chat(
+                    payload["messages"],
+                    context=build_context(workspace, payload.get("cytool_terminal_context") is True, Path.cwd()),
+                )
                 encoded = json.dumps(response).encode("utf-8")
                 self.send_response(200)
                 self.send_header("Content-Type", "application/json")

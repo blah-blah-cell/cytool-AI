@@ -20,35 +20,35 @@ class Module:
     summary: str
     category: str
     requires_authorization: bool
-    version: str = "1.0.0"
+    version: str = "2.0.0"
 
 
 BUILTIN_MODULES = (
     Module(
         id="artifact-inspector",
         name="Artifact Inspector",
-        summary="Offline metadata triage for user-provided files.",
+        summary="Streaming hashes, bounded strings, and format triage for user-provided files.",
         category="forensics",
         requires_authorization=False,
     ),
     Module(
         id="web-scope-check",
         name="Web Scope Check",
-        summary="Scope validation and passive evidence review for an authorized web target.",
+        summary="Scope validation, passive HTTP review, and TLS evidence for an authorized web target.",
         category="web-security",
         requires_authorization=True,
     ),
     Module(
         id="binary-fingerprint",
         name="Binary Fingerprint",
-        summary="Offline hashes, strings, and format hints for a user-provided binary.",
+        summary="Explainable entropy, capability, hash, and ELF/PE profiling for a supplied binary.",
         category="reverse-engineering",
         requires_authorization=False,
     ),
     Module(
         id="memory-artifact-triage",
         name="Memory Artifact Triage",
-        summary="Offline strings and indicators review for a supplied memory capture.",
+        summary="Chunk-streamed network, email, and file-path indicators from supplied memory.",
         category="memory-forensics",
         requires_authorization=True,
     ),

@@ -1,0 +1,21 @@
+{
+  "name": "Static artifact triage",
+  "fail_fast": true,
+  "steps": [
+    {
+      "id": "fingerprint",
+      "workflow": "inspect",
+      "path": "sample.bin"
+    },
+    {
+      "id": "binary-profile",
+      "workflow": "binary",
+      "path": "sample.bin"
+    },
+    {
+      "id": "indicator-extraction",
+      "workflow": "ioc",
+      "path": "sample.bin"
+    }
+  ]
+}

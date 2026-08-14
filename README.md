@@ -5,8 +5,8 @@ cytool-AI is a Linux-first, local-first cybersecurity automation workspace for
 collection, case management, a local dashboard, optional AI assistance, and
 integrity-verified tool packs without silently executing downloaded code.
 
-> Status: v1.0. The local-first defensive workflows listed below are implemented
-> and exercised by automated CLI and dashboard API tests.
+> Status: v2.0. The local-first defensive workflows listed below are implemented
+> and exercised by automated CLI, pipeline, and dashboard API tests.
 
 ## Why cytool-AI
 
@@ -27,14 +27,15 @@ integrity-verified tool packs without silently executing downloaded code.
 | --- | --- | --- |
 | Case management | Workspaces, reports, findings, audit history, SARIF export | Local files only |
 | Artifact triage | Streaming full-file hashes, bounded string sampling, format hints | Supplied files are never executed |
-| RE | Native ELF/PE metadata and optional `readelf`/`objdump`/`rabin2` evidence | Read-only parsers |
-| Memory | Offline URL, IPv4, and domain extraction | Capture is read, never executed |
+| RE | ELF/PE metadata, hashes, entropy windows, explainable capability indicators, and optional `readelf`/`objdump`/`rabin2` evidence | Static indicators are not a malware verdict |
+| Memory | Chunk-streamed URL, IP, domain, email, path, and SHA-256 evidence up to 512 MiB | Capture is read, never executed |
 | DFIR tools | Optional local YARA and Volatility adapters | Explicit authorization and user-supplied rules/images |
 | Logs | Streaming timestamp correlation across up to 128 MiB of text logs | Offline only |
 | IOCs | Local extraction (first 64 MiB), full-file hash, index, and STIX 2.1 export | No automatic external enrichment |
 | Cloud | Baseline posture flags in supplied JSON exports up to 32 MiB | Offline only |
-| Web | Response-header review and HTML form/script inventory | One in-scope request; no crawling or payload injection |
-| AI | `ask`, `teach`, and review-only `fix` workflows | Explicit provider configuration and opt-in terminal context |
+| Web | Response headers, HTML form/script inventory, and TLS certificate/protocol evidence | One in-scope request or handshake; no crawling or payload injection |
+| Pipelines | Validated JSON automation across artifact, binary, memory, cloud, IOC, and log workflows | Bundled dispatch only; no shell or manifest code loading |
+| AI | `ask`, `teach`, and review-only `fix` grounded in bounded case reports, IOCs, scope, modules, runs, and audit history | Explicit provider configuration and opt-in terminal context |
 | Terminal | `plan`, `confirm`, and `approved` modes | Tiny read-only argv allowlist; no shell/network/privilege escalation |
 
 ## Install
@@ -69,9 +70,10 @@ Set `CYTOOL_HOME` to use another parent directory.
 
 The localhost dashboard is a functional console, not only a report viewer. It
 lets you install modules, upload and statically inspect evidence, choose
-uploaded artifacts for binary/memory/cloud/IOC analysis, correlate uploaded
-logs, declare web scope, run passive web review, use optional local RE tools,
-view reports, and download SARIF/STIX case exports.
+uploaded artifacts for binary/memory/cloud/IOC analysis, run persisted
+multi-step automations, correlate uploaded logs, declare web scope, collect
+passive HTTP/TLS evidence, use optional local RE tools, view reports, and
+download SARIF/STIX case exports.
 
 Each action uses the same module and authorization checks as the CLI, writes an
 audit event, and generates a local report/finding where applicable. The AI panel
@@ -101,6 +103,31 @@ cytool iocs extract ./capture.raw --workspace research-lab
 cytool export stix --workspace research-lab --output ./indicators.stix.json
 ```
 
+### Declarative automation pipelines
+
+Pipelines are JSON data, not executable plugins. Each step maps to a bundled
+workflow and independently writes a report, finding, and audit event.
+
+```json
+{
+  "name": "Artifact triage",
+  "steps": [
+    {"id": "hash", "workflow": "inspect", "path": "sample.bin"},
+    {"id": "profile", "workflow": "binary", "path": "sample.bin"},
+    {"id": "indicators", "workflow": "ioc", "path": "sample.bin"}
+  ]
+}
+```
+
+```bash
+cytool pipeline run ./pipeline.json --workspace research-lab
+cytool pipeline history --workspace research-lab
+```
+
+Protected `memory` and `cloud` steps require `--authorized`. Relative inputs
+resolve from the manifest directory; dashboard pipelines are restricted to
+already uploaded workspace artifacts.
+
 ### Authorized web and cloud review
 
 ```bash
@@ -109,6 +136,7 @@ cytool scope set --workspace research-lab \
 cytool modules install web-scope-check --workspace research-lab
 cytool web headers https://example.com --workspace research-lab --authorized
 cytool web forms https://example.com/login --workspace research-lab --authorized
+cytool web tls https://example.com --workspace research-lab --authorized
 
 cytool modules install cloud-evidence-review --workspace research-lab
 cytool cloud review ./cloud-export.json --workspace research-lab --authorized
@@ -146,11 +174,16 @@ cytool ai teach "Explain the latest binary report" --workspace research-lab
 cytool ai fix "Prioritize these case findings" --workspace research-lab
 ```
 
-Add `--terminal-context` only when you want to share a redacted snapshot of
+Workspace AI requests automatically include bounded recent reports, findings,
+IOCs, scope, installed modules, pipeline runs, and audit events. Add
+`--terminal-context` only when you also want to share a redacted snapshot of
 `pwd`, `git status --short`, and `git diff --stat` from a chosen directory.
 
 The local dashboard also serves `GET /v1/models` and authenticated
-`POST /v1/chat/completions` for compatible local clients. It is localhost-only.
+`POST /v1/chat/completions` for compatible local clients. It uses the same
+bounded case grounding; clients may explicitly add
+`"cytool_terminal_context": true` to opt into the redacted terminal snapshot.
+The endpoint is localhost-only.
 
 ## Tool packs
 

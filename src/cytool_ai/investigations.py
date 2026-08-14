@@ -7,23 +7,42 @@ executed and no active vulnerability payloads are sent.
 
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import json
+import math
 import re
+import socket
+import ssl
 import struct
 import urllib.error
 import urllib.request
+from datetime import UTC, datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
+
+from .analysis import inspect_file
 
 ELF_MACHINES = {3: "x86", 40: "ARM", 62: "x86-64", 183: "AArch64", 243: "RISC-V"}
 PE_MACHINES = {0x014C: "x86", 0x8664: "x86-64", 0xAA64: "AArch64"}
 URL_PATTERN = re.compile(rb"https?://[^\s\"'<>]{6,512}")
 IP_PATTERN = re.compile(rb"(?:(?:25[0-5]|2[0-4]\d|1?\d?\d)\.){3}(?:25[0-5]|2[0-4]\d|1?\d?\d)")
 DOMAIN_PATTERN = re.compile(rb"\b(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,63}\b")
+EMAIL_PATTERN = re.compile(rb"\b[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9.-]{1,190}\.[A-Za-z]{2,63}\b")
+WINDOWS_PATH_PATTERN = re.compile(rb"\b[A-Za-z]:\\(?:[^\x00\r\n\\/:*?\"<>|]+\\){0,12}[^\x00\r\n\\/:*?\"<>|]{1,128}")
+UNIX_PATH_PATTERN = re.compile(rb"(?<![A-Za-z0-9])/(?:etc|home|opt|root|tmp|usr|var)/(?:[^\x00\s]{1,128})")
 MAX_BINARY_METADATA_BYTES = 64 * 1024 * 1024
 MAX_CLOUD_EXPORT_BYTES = 32 * 1024 * 1024
+MAX_BINARY_PROFILE_BYTES = 16 * 1024 * 1024
+CAPABILITY_PATTERNS = {
+    "command-shell": (b"powershell", b"cmd.exe", b"/bin/sh", b"/bin/bash"),
+    "network-client": (b"curl ", b"wget ", b"winhttp", b"internetopen", b"socket"),
+    "process-memory-access": (b"virtualalloc", b"writeprocessmemory", b"createremotethread", b"ptrace"),
+    "persistence-indicator": (b"currentversion\\run", b"systemd/system", b"cron.d"),
+    "credential-material": (b"authorization: bearer", b"private key-----", b"password="),
+}
 
 
 def binary_metadata(path: Path) -> dict[str, Any]:
@@ -71,29 +90,146 @@ def binary_metadata(path: Path) -> dict[str, Any]:
     return result
 
 
+def _entropy(data: bytes) -> float:
+    if not data:
+        return 0.0
+    counts = [0] * 256
+    for value in data:
+        counts[value] += 1
+    length = len(data)
+    return round(-sum((count / length) * math.log2(count / length) for count in counts if count), 4)
+
+
+def binary_security_profile(path: Path) -> dict[str, Any]:
+    """Build an explainable static profile without executing the binary."""
+    metadata = binary_metadata(path)
+    hashes = inspect_file(path, string_limit=100)
+    with path.open("rb") as source:
+        data = source.read(MAX_BINARY_PROFILE_BYTES + 1)
+    truncated = len(data) > MAX_BINARY_PROFILE_BYTES
+    data = data[:MAX_BINARY_PROFILE_BYTES]
+    lowered = data.lower()
+    capabilities = []
+    for capability, patterns in CAPABILITY_PATTERNS.items():
+        matches = [pattern.decode("ascii", errors="replace") for pattern in patterns if pattern in lowered]
+        if matches:
+            capabilities.append({"capability": capability, "matches": matches})
+    window_size = 64 * 1024
+    high_entropy = []
+    for offset in range(0, len(data), window_size):
+        value = _entropy(data[offset:offset + window_size])
+        if value >= 7.2:
+            high_entropy.append({"offset": offset, "size": min(window_size, len(data) - offset), "entropy": value})
+    score = min(100, len(capabilities) * 12 + min(len(high_entropy), 5) * 5)
+    return {
+        **metadata,
+        "sha256": hashes["sha256"],
+        "sha1": hashes["sha1"],
+        "entropy": _entropy(data),
+        "profile_bytes": len(data),
+        "profile_truncated": truncated,
+        "suspicious_capabilities": capabilities,
+        "high_entropy_windows": high_entropy[:20],
+        "risk_score": score,
+        "risk_note": "Explainable static indicators only; this score is not a malware verdict.",
+    }
+
+
 def memory_artifact_scan(path: Path, *, max_bytes: int = 64 * 1024 * 1024, limit: int = 100) -> dict[str, Any]:
     if not path.is_file():
         raise FileNotFoundError(f"memory capture not found: {path}")
+    if not 1 <= max_bytes <= 512 * 1024 * 1024:
+        raise ValueError("max_bytes must be between 1 byte and 512 MiB")
+    collected: dict[str, list[str]] = {"urls": [], "ipv4_addresses": [], "domains": [], "email_addresses": [], "file_paths": []}
+    seen = {key: set() for key in collected}
+    digest = hashlib.sha256()
+    examined = 0
+    overlap = b""
+
+    def add(key: str, value: str) -> None:
+        if len(collected[key]) < limit and value not in seen[key]:
+            seen[key].add(value)
+            collected[key].append(value)
+
     with path.open("rb") as source:
-        data = source.read(max_bytes + 1)
-    truncated = len(data) > max_bytes
-    data = data[:max_bytes]
-    urls = [match.decode("utf-8", errors="replace") for match in URL_PATTERN.findall(data)[:limit]]
-    ips: list[str] = []
-    for match in IP_PATTERN.findall(data):
-        value = match.decode("ascii")
-        try:
-            parsed = ipaddress.ip_address(value)
-        except ValueError:
-            continue
-        if not parsed.is_unspecified and value not in ips:
-            ips.append(value)
-    domains = []
-    for match in DOMAIN_PATTERN.findall(data):
-        value = match.decode("ascii", errors="ignore").lower()
-        if value not in domains:
-            domains.append(value)
-    return {"path": str(path.resolve()), "bytes_examined": len(data), "input_truncated": truncated, "urls": urls, "ipv4_addresses": ips[:limit], "domains": domains[:limit], "result_limit": limit}
+        while examined < max_bytes:
+            chunk = source.read(min(1024 * 1024, max_bytes - examined))
+            if not chunk:
+                break
+            examined += len(chunk)
+            digest.update(chunk)
+            scan = overlap + chunk
+            for match in URL_PATTERN.findall(scan):
+                add("urls", match.decode("utf-8", errors="replace"))
+            for match in IP_PATTERN.findall(scan):
+                value = match.decode("ascii")
+                try:
+                    parsed = ipaddress.ip_address(value)
+                except ValueError:
+                    continue
+                if not parsed.is_unspecified:
+                    add("ipv4_addresses", value)
+            for match in DOMAIN_PATTERN.findall(scan):
+                add("domains", match.decode("ascii", errors="ignore").lower())
+            for match in EMAIL_PATTERN.findall(scan):
+                add("email_addresses", match.decode("utf-8", errors="replace").lower())
+            for pattern in (WINDOWS_PATH_PATTERN, UNIX_PATH_PATTERN):
+                for match in pattern.findall(scan):
+                    add("file_paths", match.decode("utf-8", errors="replace"))
+            overlap = scan[-1024:]
+    return {
+        "path": str(path.resolve()),
+        "bytes_examined": examined,
+        "sha256": digest.hexdigest(),
+        "input_truncated": path.stat().st_size > examined,
+        **collected,
+        "result_limit": limit,
+    }
+
+
+def tls_evidence(url: str) -> dict[str, Any]:
+    """Collect one scoped TLS handshake and peer-certificate summary."""
+    parsed = urlsplit(url)
+    if parsed.scheme != "https" or not parsed.hostname:
+        raise ValueError("TLS evidence requires an HTTPS URL")
+    port = parsed.port or 443
+    context = ssl.create_default_context()
+    with socket.create_connection((parsed.hostname, port), timeout=15) as raw, context.wrap_socket(raw, server_hostname=parsed.hostname) as secured:
+        certificate = secured.getpeercert()
+        certificate_binary = secured.getpeercert(binary_form=True)
+        cipher = secured.cipher()
+        protocol = secured.version()
+    expires_at = None
+    days_remaining = None
+    if certificate.get("notAfter"):
+        expiry = datetime.fromtimestamp(ssl.cert_time_to_seconds(certificate["notAfter"]), UTC)
+        expires_at = expiry.isoformat()
+        days_remaining = (expiry - datetime.now(UTC)).days
+
+    def flatten(name: object) -> dict[str, str]:
+        result: dict[str, str] = {}
+        if isinstance(name, tuple):
+            for group in name:
+                if isinstance(group, tuple):
+                    for item in group:
+                        if isinstance(item, tuple) and len(item) == 2:
+                            result[str(item[0])] = str(item[1])
+        return result
+
+    return {
+        "url": url,
+        "host": parsed.hostname,
+        "port": port,
+        "protocol": protocol,
+        "cipher": {"name": cipher[0], "protocol": cipher[1], "bits": cipher[2]} if cipher else None,
+        "subject": flatten(certificate.get("subject")),
+        "issuer": flatten(certificate.get("issuer")),
+        "serial_number": certificate.get("serialNumber"),
+        "subject_alt_names": [value for kind, value in certificate.get("subjectAltName", ()) if kind == "DNS"][:100],
+        "expires_at": expires_at,
+        "days_remaining": days_remaining,
+        "certificate_sha256": hashlib.sha256(certificate_binary or b"").hexdigest(),
+    }
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -103,7 +239,7 @@ class _NoRedirect(urllib.request.HTTPRedirectHandler):
 
 def web_evidence(url: str) -> dict[str, Any]:
     """Fetch response headers only; redirects remain unvisited for scope safety."""
-    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/1.0 (authorized evidence review)"}, method="HEAD")
+    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/2.0 (authorized evidence review)"}, method="HEAD")
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(request, timeout=15) as response:
@@ -148,7 +284,7 @@ class _SurfaceParser(HTMLParser):
 
 def web_input_surface(url: str, *, max_bytes: int = 2 * 1024 * 1024) -> dict[str, Any]:
     """Retrieve one in-scope page and inventory its declared HTML inputs only."""
-    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/1.0 (authorized input inventory)"}, method="GET")
+    request = urllib.request.Request(url, headers={"User-Agent": "cytool-AI/2.0 (authorized input inventory)"}, method="GET")
     opener = urllib.request.build_opener(_NoRedirect)
     try:
         with opener.open(request, timeout=15) as response:

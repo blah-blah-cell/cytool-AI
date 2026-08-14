@@ -1,5 +1,17 @@
 # Changelog
 
+## 2.0.0 — 2026-08-14
+
+- Added validated declarative pipelines with persisted run/step history across
+  artifact, binary, memory, cloud, IOC, and log workflows.
+- Added dashboard automation controls and pipeline JSON APIs.
+- Added explainable binary entropy and suspicious-capability profiling.
+- Reworked memory triage as a bounded chunk stream with SHA-256, URL, IP,
+  domain, email, and file-path extraction across chunk boundaries.
+- Added scope-gated TLS protocol and peer-certificate evidence.
+- Grounded AI workflows in bounded recent case reports, findings, indicators,
+  authorization scope, installed modules, pipeline runs, and audit events.
+
 ## 1.0.0 — 2026-08-14
 
 - Declared the implemented local-first defensive scope stable.

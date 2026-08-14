@@ -19,14 +19,17 @@ from cytool_ai.findings import list_all as workspace_findings
 from cytool_ai.integrations import discover
 from cytool_ai.investigations import (
     binary_metadata,
+    binary_security_profile,
     cloud_export_review,
     memory_artifact_scan,
+    tls_evidence,
 )
 from cytool_ai.iocs import extract
 from cytool_ai.iocs import extract as extract_iocs
 from cytool_ai.modules import registry
 from cytool_ai.operations import backup, doctor
 from cytool_ai.paths import workspace_path
+from cytool_ai.pipelines import list_runs, run_pipeline, validate_manifest
 from cytool_ai.policy import Scope, save, validate_target
 from cytool_ai.reports import write_report
 from cytool_ai.state import atomic_write_text
@@ -187,6 +190,36 @@ def test_memory_domains_and_elf_sections(tmp_path):
     assert "api.example.test" in memory_artifact_scan(capture)["domains"]
 
 
+def test_v2_binary_profile_is_explainable(tmp_path):
+    sample = tmp_path / "profile.bin"
+    sample.write_bytes(b"MZ" + b"\0" * 128 + b"VirtualAlloc WriteProcessMemory powershell curl ")
+    profile = binary_security_profile(sample)
+    capabilities = {item["capability"] for item in profile["suspicious_capabilities"]}
+    assert capabilities >= {"command-shell", "network-client", "process-memory-access"}
+    assert profile["risk_score"] > 0
+    assert "not a malware verdict" in profile["risk_note"]
+
+
+def test_v2_memory_scan_streams_across_chunk_boundaries(tmp_path):
+    capture = tmp_path / "large.raw"
+    prefix = b"A" * (1024 * 1024 - 4)
+    capture.write_bytes(prefix + b"https://boundary.example/path analyst@example.test C:\\Windows\\System32\\cmd.exe 203.0.113.9")
+    evidence = memory_artifact_scan(capture, max_bytes=2 * 1024 * 1024)
+    assert "https://boundary.example/path" in evidence["urls"]
+    assert "analyst@example.test" in evidence["email_addresses"]
+    assert "203.0.113.9" in evidence["ipv4_addresses"]
+    assert evidence["sha256"]
+
+
+def test_v2_tls_requires_https():
+    try:
+        tls_evidence("http://example.com")
+    except ValueError as exc:
+        assert "HTTPS" in str(exc)
+    else:
+        raise AssertionError("TLS collection must reject non-TLS URLs")
+
+
 def test_sarif_export(tmp_path):
     workspace = tmp_path / "workspace"
     workspace.mkdir()
@@ -240,6 +273,20 @@ def test_ai_context_requires_explicit_terminal_opt_in(tmp_path):
     context = build_context(workspace, False, tmp_path)
     assert context["workspace"] == "workspace"
     assert "terminal_snapshot" not in context
+
+
+def test_v2_ai_context_is_grounded_in_case_evidence(tmp_path):
+    workspace = tmp_path / "workspace"
+    (workspace / "findings").mkdir(parents=True)
+    report = write_report(workspace, "Grounded report", {"finding": "review this evidence"})
+    add(workspace, "Grounded report", report, "medium")
+    source = tmp_path / "indicator.txt"
+    source.write_text("https://context.example/path")
+    extract(workspace, source)
+    context = build_context(workspace, False, tmp_path)
+    assert context["recent_findings"][0]["report_excerpt"].startswith("# Grounded report")
+    assert context["indicators"]
+    assert context["installed_modules"] == []
 
 
 def test_uploaded_artifact_can_feed_ioc_analysis(tmp_path):
@@ -338,6 +385,41 @@ def test_reports_do_not_collide_within_one_second(tmp_path):
     assert first.is_file() and second.is_file()
 
 
+def test_v2_pipeline_cli_and_persisted_history(monkeypatch, tmp_path, capsys):
+    monkeypatch.setenv("CYTOOL_HOME", str(tmp_path / "state"))
+    sample = tmp_path / "sample.bin"
+    sample.write_bytes(b"MZ" + b"\0" * 80 + b"powershell https://pipeline.example/path")
+    manifest_path = tmp_path / "pipeline.json"
+    manifest_path.write_text(json.dumps({
+        "name": "Complete artifact triage",
+        "steps": [
+            {"id": "hash", "workflow": "inspect", "path": "sample.bin"},
+            {"id": "profile", "workflow": "binary", "path": "sample.bin"},
+            {"id": "indicators", "workflow": "ioc", "path": "sample.bin"},
+        ],
+    }))
+    assert main(["init", "pipeline-lab"]) == 0
+    assert main(["modules", "install", "artifact-inspector", "--workspace", "pipeline-lab"]) == 0
+    assert main(["modules", "install", "binary-fingerprint", "--workspace", "pipeline-lab"]) == 0
+    assert main(["pipeline", "run", str(manifest_path), "--workspace", "pipeline-lab"]) == 0
+    assert main(["pipeline", "history", "--workspace", "pipeline-lab"]) == 0
+    assert "Complete artifact triage" in capsys.readouterr().out
+    runs = list_runs(workspace_path("pipeline-lab"))
+    assert runs[0]["status"] == "completed"
+    assert len(runs[0]["steps"]) == 3
+
+
+def test_v2_pipeline_enforces_module_and_authorization(tmp_path):
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    capture = tmp_path / "capture.raw"
+    capture.write_bytes(b"memory")
+    manifest = validate_manifest({"name": "Protected", "steps": [{"workflow": "memory", "path": str(capture)}]})
+    result = run_pipeline(workspace, manifest)
+    assert result["status"] == "failed"
+    assert "install the memory-artifact-triage" in result["steps"][0]["error"]
+
+
 def test_dashboard_http_workflows(monkeypatch, tmp_path):
     monkeypatch.setenv("CYTOOL_HOME", str(tmp_path / "state"))
     assert main(["init", "dashboard-lab"]) == 0
@@ -376,6 +458,10 @@ def test_dashboard_http_workflows(monkeypatch, tmp_path):
 
         status, _, body = request("/api/offline/analyze", method="POST", data=json.dumps({"workflow": "ioc", "artifact": "sample.bin"}).encode(), headers={"Content-Type": "application/json"})
         assert status == 201 and json.loads(body)["evidence"]["indicator_count"] >= 1
+        status, _, body = request("/api/pipelines/run", method="POST", data=json.dumps({"name": "Dashboard triage", "artifact": "sample.bin", "workflows": ["inspect", "ioc"]}).encode(), headers={"Content-Type": "application/json"})
+        assert status == 201 and json.loads(body)["status"] == "completed"
+        status, _, body = request("/api/pipelines")
+        assert status == 200 and json.loads(body)["runs"][0]["name"] == "Dashboard triage"
         status, _, body = request("/api/summary")
         assert status == 200 and json.loads(body)["findings"] >= 2
         status, headers, body = request("/api/export/sarif")
@@ -421,6 +507,7 @@ def test_openai_compatible_endpoint_proxies_provider(monkeypatch, tmp_path):
             assert self.path == "/v1/chat/completions"
             assert self.headers["Authorization"] == "Bearer upstream-secret"
             assert payload["messages"][0]["role"] == "system"
+            assert "recent_findings" in payload["messages"][0]["content"]
             encoded = json.dumps({"id": "chatcmpl-test", "object": "chat.completion", "choices": [{"index": 0, "message": {"role": "assistant", "content": "provider-ok"}, "finish_reason": "stop"}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")

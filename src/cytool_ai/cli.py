@@ -19,9 +19,10 @@ from .findings import add as add_finding
 from .findings import list_all
 from .integrations import discover
 from .investigations import (
-    binary_metadata,
+    binary_security_profile,
     cloud_export_review,
     memory_artifact_scan,
+    tls_evidence,
     web_evidence,
     web_input_surface,
 )
@@ -30,6 +31,7 @@ from .iocs import list_all as list_iocs
 from .logs import correlate
 from .modules import install, installed, registry
 from .operations import backup, doctor
+from .pipelines import list_runs, load_manifest, run_pipeline
 from .policy import Scope, save, validate_target
 from .reports import write_ai_bundle, write_report
 from .retools import inspect as external_re_inspect
@@ -105,6 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
     log_correlate.add_argument("paths", nargs="+")
     log_correlate.add_argument("--workspace", required=True)
 
+    pipelines = commands.add_parser("pipeline", help="run declarative multi-step defensive workflows")
+    pipeline_commands = pipelines.add_subparsers(dest="pipeline_command", required=True)
+    pipeline_run = pipeline_commands.add_parser("run", help="execute a validated JSON pipeline manifest")
+    pipeline_run.add_argument("manifest")
+    pipeline_run.add_argument("--workspace", required=True)
+    pipeline_run.add_argument("--authorized", action="store_true", help="confirm authorization for protected steps")
+    pipeline_history = pipeline_commands.add_parser("history", help="list recent pipeline runs")
+    pipeline_history.add_argument("--workspace", required=True)
+
     binary = commands.add_parser("binary", help="offline binary and reverse-engineering metadata")
     binary_commands = binary.add_subparsers(dest="binary_command", required=True)
     binary_inspect = binary_commands.add_parser("inspect", help="parse ELF/PE container metadata without execution")
@@ -133,6 +144,10 @@ def build_parser() -> argparse.ArgumentParser:
     web_forms.add_argument("url")
     web_forms.add_argument("--workspace", required=True)
     web_forms.add_argument("--authorized", action="store_true")
+    web_tls = web_commands.add_parser("tls", help="collect one TLS handshake and certificate summary")
+    web_tls.add_argument("url")
+    web_tls.add_argument("--workspace", required=True)
+    web_tls.add_argument("--authorized", action="store_true")
 
     cloud = commands.add_parser("cloud", help="offline review of exported cloud configuration")
     cloud_commands = cloud.add_subparsers(dest="cloud_command", required=True)
@@ -286,12 +301,21 @@ def main(argv: Sequence[str] | None = None) -> int:
             record(workspace, "logs.correlated", sources=evidence["sources"], event_count=evidence["event_count"])
             print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
             return 0
+        if args.command == "pipeline" and args.pipeline_command == "history":
+            print(json.dumps(list_runs(open_workspace(args.workspace)), indent=2))
+            return 0
+        if args.command == "pipeline":
+            workspace = open_workspace(args.workspace)
+            manifest_path = Path(args.manifest).resolve()
+            result = run_pipeline(workspace, load_manifest(manifest_path), base=manifest_path.parent, authorized=args.authorized)
+            print(json.dumps(result, indent=2))
+            return 0 if result["status"] == "completed" else 2
         if args.command == "binary":
             workspace = open_workspace(args.workspace)
             if "binary-fingerprint" not in installed(workspace):
                 raise RuntimeError("module is not installed: binary-fingerprint")
-            evidence = binary_metadata(Path(args.path)) if args.binary_command == "inspect" else external_re_inspect(Path(args.path), args.tool)
-            title = "Binary metadata" if args.binary_command == "inspect" else f"External RE evidence ({args.tool})"
+            evidence = binary_security_profile(Path(args.path)) if args.binary_command == "inspect" else external_re_inspect(Path(args.path), args.tool)
+            title = "Binary security profile" if args.binary_command == "inspect" else f"External RE evidence ({args.tool})"
             report_path = write_report(workspace, title, evidence)
             add_finding(workspace, title, report_path)
             record(workspace, "binary.inspected", path=str(Path(args.path).resolve()), engine=args.binary_command)
@@ -318,12 +342,16 @@ def main(argv: Sequence[str] | None = None) -> int:
             if not args.authorized:
                 raise PermissionError("web evidence review requires --authorized confirmation")
             validate_target(workspace, args.url)
-            evidence = web_evidence(args.url) if args.web_command == "headers" else web_input_surface(args.url)
-            title = "Web response-header review" if args.web_command == "headers" else "Web input-surface inventory"
-            severity = "low" if args.web_command == "headers" and evidence["missing_recommended_headers"] else "info"
+            if args.web_command == "headers":
+                evidence, title = web_evidence(args.url), "Web response-header review"
+            elif args.web_command == "forms":
+                evidence, title = web_input_surface(args.url), "Web input-surface inventory"
+            else:
+                evidence, title = tls_evidence(args.url), "Web TLS evidence"
+            severity = "low" if (args.web_command == "headers" and evidence["missing_recommended_headers"]) or (args.web_command == "tls" and evidence.get("days_remaining", 999) < 30) else "info"
             report_path = write_report(workspace, title, evidence)
             add_finding(workspace, title, report_path, severity)
-            record(workspace, f"web.{args.web_command}_reviewed", url=args.url, status=evidence["status"])
+            record(workspace, f"web.{args.web_command}_reviewed", url=args.url, status=evidence.get("status"), protocol=evidence.get("protocol"))
             print(json.dumps({"evidence": evidence, "report": str(report_path)}, indent=2))
             return 0
         if args.command == "cloud":
