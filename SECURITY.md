@@ -6,9 +6,10 @@ The current `main` branch and the latest stable release are supported.
 
 ## Reporting a vulnerability
 
-Please do not open a public issue for a potential vulnerability. Email the
-maintainer privately with a concise reproduction, impact assessment, and any
-relevant logs. Do not include secrets, real client evidence, or live-target
+Please do not open a public issue for a potential vulnerability. Use
+**Security → Report a vulnerability** in this GitHub repository to submit a
+private report with a concise reproduction, impact assessment, and relevant
+sanitized logs. Do not include secrets, real client evidence, or live-target
 details. You should receive an acknowledgement within seven days.
 
 ## Security boundaries
