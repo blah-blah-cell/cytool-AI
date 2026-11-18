@@ -1,25 +1,22 @@
 # cytool-AI
 
-cytool-AI is a Linux-first, local-first cybersecurity automation workspace for
-**authorized research and defensive operations**. It combines evidence
-collection, case management, a local dashboard, optional AI assistance, and
-integrity-verified tool packs without silently executing downloaded code.
+CyTool AI is a Linux tool for authorized security research and defensive work.
+Use it to open a case, inspect evidence, and review findings in a local
+dashboard. AI assistance is optional.
 
-> Status: v2.0. The local-first defensive workflows listed below are implemented
-> and exercised by automated CLI, pipeline, and dashboard API tests.
+Version 2.0 includes tests for the CLI, pipelines, and dashboard API.
 
-## Why cytool-AI
+## How it handles case data
 
-- **Local by default** — workspaces, evidence, reports, and audit logs remain
-  on the operator's machine.
-- **Authorization first** — protected modules require `--authorized`; web work
-  must match a declared domain scope.
-- **Auditable** — installations, analysis actions, AI requests, and terminal
-  requests are captured in an append-only JSON Lines audit trail.
-- **Modular** — install only the capabilities you need. Tool packs require an
-  explicit manifest and SHA-256 verification before download.
-- **AI-ready, not AI-dependent** — connect an OpenAI-compatible provider when
-  wanted; provider credentials are only read from an environment variable.
+Workspaces, evidence, reports, and audit logs stay on your machine by default.
+Protected modules require `--authorized`, and web checks must match a declared
+domain scope. The append-only JSON Lines log records installations, analysis
+actions, AI requests, and terminal requests.
+
+Install the modules you need. Tool packs require a manifest and SHA-256
+verification. CyTool stores downloaded packs without running them. If you
+connect an OpenAI-compatible provider, it reads the API key from an
+environment variable.
 
 ## What works today
 
@@ -68,12 +65,11 @@ Set `CYTOOL_HOME` to use another parent directory.
 
 ## Dashboard workflows
 
-The localhost dashboard is a functional console, not only a report viewer. It
-lets you install modules, upload and statically inspect evidence, choose
-uploaded artifacts for binary/memory/cloud/IOC analysis, run persisted
-multi-step automations, correlate uploaded logs, declare web scope, collect
-passive HTTP/TLS evidence, use optional local RE tools, view reports, and
-download SARIF/STIX case exports.
+Use the dashboard to install modules or upload a file for static inspection.
+It can run binary, memory, cloud, and IOC checks on uploaded artifacts, save
+and run a pipeline, and correlate logs. It also supports scoped passive HTTP
+and TLS checks, optional local reverse-engineering tools, and SARIF or STIX
+exports.
 
 Each action uses the same module and authorization checks as the CLI, writes an
 audit event, and generates a local report/finding where applicable. The AI panel
@@ -105,8 +101,9 @@ cytool export stix --workspace research-lab --output ./indicators.stix.json
 
 ### Declarative automation pipelines
 
-Pipelines are JSON data, not executable plugins. Each step maps to a bundled
-workflow and independently writes a report, finding, and audit event.
+A pipeline is a JSON list of steps. Each step runs a bundled workflow and
+writes a report, finding, and audit event. The manifest cannot load plugins
+or run shell code.
 
 ```json
 {
@@ -161,8 +158,9 @@ cytool export sarif --workspace research-lab --output ./findings.sarif
 
 ## AI assistant
 
-cytool-AI accepts OpenAI-compatible Chat Completions providers. It stores the
-provider URL, model, and environment-variable name only—not the API key.
+CyTool accepts OpenAI-compatible Chat Completions providers. It stores the
+provider URL, the model, and the name of the environment variable that holds
+the API key. It does not store the key itself.
 
 ```bash
 export OPENAI_API_KEY="..."
@@ -225,9 +223,8 @@ modules, and optional local DFIR/RE integration availability:
 cytool doctor --workspace research-lab
 ```
 
-Create a portable, complete ZIP backup of the workspace (including evidence,
-reports, audit trail, and local indexes) before moving it to another approved
-machine or retaining case records:
+To move a case to another approved machine or retain its records, make a ZIP
+backup. It includes evidence, reports, the audit log, and local indexes:
 
 ```bash
 cytool backup --workspace research-lab --output ./research-lab-backup.zip
